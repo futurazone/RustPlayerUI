@@ -1,0 +1,553 @@
+import { ScrollView } from "std-widgets.slint";
+
+export struct AlbumData {
+    title: string,
+    artist: string,
+    album_title: string,
+    album_artist: string,
+    cover: image,
+}
+
+export struct TrackData {
+    track_id: string,
+    title: string,
+    artist: string,
+    duration_text: string,
+    track_number: int,
+}
+
+enum ScreenState { selector, player, track_picker, calibration }
+enum BrowserMode { albums, playlists }
+
+component AlbumItem inherits Rectangle {
+    in property <string> title;
+    in property <string> artist;
+    in property <image> cover;
+    in property <length> x-pos;
+    in property <bool> is-center;
+    in property <length> box-height;
+    in property <float> vertical-scaling;
+
+    width: is-center ? self.box-height * 1.1 : self.box-height * 0.9;
+    height: self.width * vertical-scaling;
+    x: x-pos - self.width / 2;
+    y: (self.box-height * 1.1 * vertical-scaling - self.height) / 2;
+    
+    background: #1a1a1a;
+    border-radius: 8px;
+    clip: true; 
+    border-width: 1.5px;
+    border-color: is-center ? #404040 : transparent;
+
+    Image {
+        width: 100%;
+        height: 100%;
+        source: root.cover;
+        image-fit: fill; // Fills the squashed rectangle so hardware stretch makes it square
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <length> size: 36px;
+    in property <float> v-scale: 1.0; 
+    in property <color> icon-color: white;
+    in property <color> bg-color: #1a1a1a;
+    in property <length> icon-padding: 8px;
+    
+    callback clicked();
+
+    width: size;
+    height: size * v-scale; // Compensación de estiramiento vertical
+    background: bg-color;
+    border-radius: size / 2;
+
+    Image {
+        width: parent.width - 2 * icon-padding;
+        height: parent.height - 2 * icon-padding;
+        x: icon-padding;
+        y: icon-padding;
+        source: icon;
+        colorize: icon-color;
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component AppWindow inherits Window {
+    width: 1280px;
+    height: 720px;
+    title: "Pi Player Rust UI";
+    background: #000;
+
+    in property <[AlbumData]> visible_items: [];
+    in property <[length]> x_positions: [];
+    in property <int> center_index: 3;
+    in property <length> swiper_offset: 0;
+    in property <image> bg_cover;
+    
+    in-out property <ScreenState> current_screen: ScreenState.selector;
+    in-out property <BrowserMode> browser_mode: BrowserMode.albums;
+    in-out property <float> vertical_scaling: 0.90; // Corrección para estiramiento en Pi (720/800)
+
+    in property <image> icon_prev;
+    in property <image> icon_play;
+    in property <image> icon_pause;
+    in property <image> icon_next;
+    in property <image> icon_shuffle;
+    in property <image> icon_repeat;
+    in property <image> icon_library;
+    
+    in property <string> album_title: "---";
+    in property <string> album_artist: "---";
+
+    // Playback State Properties
+    in-out property <bool> is_playing: false;
+    in-out property <bool> shuffle_on: false;
+    in-out property <bool> repeat_on: false;
+    in-out property <float> progress_pos: 0.0; // 0.0 to 1.0
+    in-out property <string> time_label: "0:00";
+    in-out property <string> current_track_title: "---";
+    in-out property <string> current_track_artist: "---";
+    in-out property <string> current_track_album: "---";
+    in property <[TrackData]> current_tracks: [];
+
+    in-out property <length> track_list_offset: 0;
+    in-out property <length> warp_offset: 0;
+    in-out property <float> warp_opacity: 1.0;
+
+    callback swiper_dragged(length);
+    callback swiper_released(length);
+    callback album_clicked(int);
+    callback album_pressed(int, length, length);
+    callback album_released(int, length, length);
+    callback back_to_selector();
+    callback toggle_browser_mode();
+    callback track_clicked(string);
+    callback close_track_picker();
+
+    // Player Callbacks
+    callback toggle_pause();
+    callback play_next();
+    callback play_prev();
+    callback rewind();
+    callback forward();
+    callback toggle_shuffle();
+    callback toggle_repeat();
+
+    callback global_touch_down(length, length);
+    callback global_touch_move(length, length);
+    callback global_touch_up(length, length);
+
+    // Background
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.bg_cover;
+            image-fit: cover;
+            opacity: 0.22;
+        }
+        Rectangle {
+            background: @linear-gradient(180deg, #00000000 0%, #000 100%);
+        }
+    }
+
+    // --- PANTALLA SELECTOR ---
+    selector_screen := Rectangle {
+        width: 100%;
+        height: 100%;
+        opacity: current_screen == ScreenState.selector ? 1 : 0;
+        x: current_screen == ScreenState.selector ? 0 : -200px;
+        visible: self.opacity > 0;
+        animate opacity, x { duration: 250ms; easing: ease-out; }
+
+        VerticalLayout {
+            padding-top: 110px;
+            padding-bottom: 20px;
+            
+            // Carrusel de álbumes
+            Rectangle {
+                height: 420px;
+                for idx in 7 : AlbumItem {
+                    opacity: root.warp_opacity;
+                    title: visible_items[idx].title;
+                    artist: visible_items[idx].artist;
+                    cover: visible_items[idx].cover;
+                    x-pos: x_positions[idx] + swiper_offset + root.warp_offset;
+                    is-center: idx == center_index;
+                    box-height: 420px;
+                    vertical-scaling: root.vertical_scaling;
+                }
+            }
+
+            // Información del álbum centrado
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: visible_items[center_index].title;
+                    horizontal-alignment: center;
+                    font-size: 42px;
+                    font-weight: 800;
+                    color: white;
+                }
+                Text {
+                    text: visible_items[center_index].artist;
+                    horizontal-alignment: center;
+                    font-size: 28px;
+                    color: #afcbed;
+                }
+            }
+        }
+
+        // ZONA TÁCTIL GLOBAL DEL SELECTOR
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    root.global_touch_down(self.mouse-x, self.mouse-y);
+                }
+                if (event.kind == PointerEventKind.move && self.pressed) {
+                    root.swiper_dragged(self.mouse-x - self.pressed-x);
+                    root.global_touch_move(self.mouse-x, self.mouse-y);
+                }
+                if (event.kind == PointerEventKind.up) {
+                    root.swiper_released(self.mouse-x - self.pressed-x);
+                    root.global_touch_up(self.mouse-x, self.mouse-y);
+                }
+            }
+            clicked => {
+                if (abs(self.mouse-x - self.pressed-x) / 1px < 15) {
+                    root.album_clicked(root.center_index);
+                }
+            }
+        }
+
+        // --- BARRA DE ALFABETO (CAPA SUPERIOR) ---
+        Rectangle {
+            y: 0;
+            width: 100%;
+            height: 90px;
+            background: #00000044; // Sombreado ligero superior
+            
+            HorizontalLayout {
+                padding-left: 40px;
+                padding-right: 40px;
+                for char in ["#", "B", "D", "F", "H", "J", "L", "N", "P", "R", "T", "V", "X", "Z"] : Text {
+                    text: char;
+                    font-size: 32px;
+                    font-weight: 800;
+                    color: #4da6ff;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // --- PANTALLA PLAYER ---
+    player_screen := Rectangle {
+        width: 100%;
+        height: 100%;
+        opacity: current_screen == ScreenState.player ? 1 : 0;
+        x: current_screen == ScreenState.player ? 0 : parent.width;
+        visible: self.opacity > 0;
+        animate opacity, x { duration: 250ms; easing: ease-out; }
+
+        VerticalLayout {
+            padding: 20px;
+            padding-top: 100px;
+            padding-bottom: 25px;
+            spacing: 0px;
+
+            HorizontalLayout {
+                spacing: 60px;
+                padding-left: 30px;
+                
+                VerticalLayout {
+                    horizontal-stretch: 45;
+                    spacing: 45px;
+                    alignment: start;
+                    
+                    Rectangle {
+                        width: 420px;
+                        height: self.width * root.vertical_scaling;
+                        background: #111;
+                        border-radius: 24px;
+                        clip: true;
+                        Image { source: root.bg_cover; width: 100%; height: 100%; image-fit: fill; }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 50px;
+                        IconButton { 
+                            icon: icon_shuffle; 
+                            size: 120px; 
+                            v-scale: root.vertical_scaling;
+                            icon-padding: 28px; 
+                            bg-color: shuffle_on ? #0059e666 : #ffffff1a; 
+                            icon-color: shuffle_on ? #4da6ff : #a6b8d1; 
+                            clicked => { toggle_shuffle(); }
+                        }
+                        IconButton { 
+                            icon: icon_repeat; 
+                            size: 120px; 
+                            v-scale: root.vertical_scaling;
+                            icon-padding: 28px; 
+                            bg-color: repeat_on ? #0059e666 : #ffffff1a; 
+                            icon-color: repeat_on ? #4da6ff : #a6b8d1; 
+                            clicked => { toggle_repeat(); }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 55;
+                    alignment: start;
+                    spacing: 15px;
+
+                    VerticalLayout {
+                        padding-top: 30px;
+                        spacing: 15px;
+                        Text { text: current_track_title; font-size: 58px; font-weight: 800; color: white; overflow: elide; }
+                        Text { text: current_track_album; font-size: 36px; color: #a6b8d1; overflow: elide; }
+                        Text { text: current_track_artist; font-size: 36px; color: #a6b8d1; overflow: elide; }
+                    }
+
+                    Rectangle { height: 60px; } 
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 50px;
+                        IconButton {
+                            icon: icon_prev;
+                            size: 120px;
+                            v-scale: root.vertical_scaling;
+                            icon-padding: 28px;
+                            bg-color: #262626;
+                            clicked => { rewind(); }
+                        }
+                        IconButton {
+                            icon: is_playing ? icon_pause : icon_play;
+                            size: 165px;
+                            v-scale: root.vertical_scaling;
+                            icon-padding: 38px;
+                            bg-color: #0059e6;
+                            clicked => { toggle_pause(); }
+                        }
+                        IconButton {
+                            icon: icon_next;
+                            size: 120px;
+                            v-scale: root.vertical_scaling;
+                            icon-padding: 28px;
+                            bg-color: #262626;
+                            clicked => { forward(); }
+                        }
+                    }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                padding: 15px;
+                spacing: 25px;
+                
+                Rectangle {
+                    height: 10px;
+                    horizontal-stretch: 1;
+                    background: #333;
+                    border-radius: 5px;
+                    Rectangle {
+                        width: parent.width * progress_pos;
+                        height: 100%;
+                        background: #007bff;
+                        border-radius: 5px;
+                    }
+                }
+                Text { text: time_label; color: #bfccde; font-size: 28px; vertical-alignment: center; }
+            }
+        }
+    }
+
+    // --- PANTALLA TRACK PICKER (MODAL) ---
+    if (current_screen == ScreenState.track_picker) : Rectangle {
+        background: #000000; // Totalmente opaco para evitar errores de blending GL
+        width: 100%;
+        height: 100%;
+        
+        VerticalLayout {
+            padding: 40px;
+            spacing: 20px;
+            
+            // CABECERA FIJA (Título del álbum y botón cerrar)
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: root.album_title;
+                    font-size: 44px;
+                    font-weight: 800;
+                    color: white;
+                    vertical-alignment: center;
+                }
+                
+                Rectangle {
+                    width: 70px;
+                    height: 70px;
+                    Text {
+                        text: "✕";
+                        font-size: 54px;
+                        color: white;
+                        font-weight: 300;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => { close_track_picker(); }
+                    }
+                }
+            }
+            
+            // ZONA DE LISTA CON SCROLL MANUAL
+            Rectangle {
+                background: #1a1a1a;
+                border-radius: 12px;
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                clip: true; // Para ocultar lo que sale del área
+                
+                list_container := VerticalLayout {
+                    y: root.track_list_offset;
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    padding-top: 10px;
+                    padding-bottom: 20px;
+                    spacing: 0px;
+                    
+                    // Lista de canciones
+                    for track in current_tracks : Rectangle {
+                        height: 90px;
+                        // El fondo se aclara al pulsar (pendiente de vincular si hace falta, 
+                        // pero por ahora lo dejamos estático o con touch manual en Rust)
+                        background: transparent;
+                        
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 20px;
+                            Text {
+                                text: track.track_number;
+                                color: #666;
+                                font-size: 28px;
+                                vertical-alignment: center;
+                                width: 50px;
+                            }
+                            Text {
+                                text: track.title;
+                                color: white;
+                                font-size: 28px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: track.duration_text;
+                                color: #666;
+                                font-size: 24px;
+                                vertical-alignment: center;
+                            }
+                        }
+                        
+                        Rectangle {
+                            y: parent.height - 2px;
+                            height: 2px;
+                            width: 100%;
+                            background: #222;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // --- PANTALLA DE CALIBRACION ---
+    if (current_screen == ScreenState.calibration) : Rectangle {
+        background: #111;
+        width: 100%;
+        height: 100%;
+        
+        Text {
+            text: "PANTALLA DE CALIBRACIÓN\nToca cada círculo para registrar coordenadas";
+            font-size: 32px;
+            color: #666;
+            horizontal-alignment: center;
+            y: 300px;
+        }
+
+        // TouchArea GLOBAL para capturar coordenadas de ventana reales
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    // Usamos ID 110 para indicar toque libre en calibración
+                    album_pressed(110, self.mouse-x, self.mouse-y);
+                }
+            }
+        }
+
+        // Marcadores de Esquinas (Solo visuales)
+        // Top Left
+        Rectangle { x: 0; y: 0; width: 80px; height: 80px; background: #ff4444; border-radius: 40px;
+            Text { text: "TL"; color: white; vertical-alignment: center; horizontal-alignment: center; }
+        }
+        // Top Right
+        Rectangle { x: parent.width - 80px; y: 0; width: 80px; height: 80px; background: #44ff44; border-radius: 40px;
+            Text { text: "TR"; color: white; vertical-alignment: center; horizontal-alignment: center; }
+        }
+        // Bottom Left
+        Rectangle { x: 0; y: parent.height - 80px; width: 80px; height: 80px; background: #4444ff; border-radius: 40px;
+            Text { text: "BL"; color: white; vertical-alignment: center; horizontal-alignment: center; }
+        }
+        // Bottom Right
+        Rectangle { x: parent.width - 80px; y: parent.height - 80px; width: 80px; height: 80px; background: #ffff44; border-radius: 40px;
+            Text { text: "BR"; color: white; vertical-alignment: center; horizontal-alignment: center; }
+        }
+        // Center
+        Rectangle { x: (parent.width - 80px)/2; y: (parent.height - 80px)/2; width: 80px; height: 80px; background: white; border-radius: 40px;
+            Text { text: "C"; color: black; vertical-alignment: center; horizontal-alignment: center; }
+        }
+
+        IconButton {
+            icon: icon_prev;
+            x: 20px;
+            y: 20px;
+            bg-color: #333;
+            v-scale: root.vertical_scaling;
+            clicked => { back_to_selector(); }
+        }
+    }
+
+    // TouchArea GLOBAL para tracking manual
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                global_touch_down(self.mouse-x, self.mouse-y);
+            }
+            if (event.kind == PointerEventKind.up) {
+                global_touch_up(self.mouse-x, self.mouse-y);
+            }
+        }
+        moved => {
+            global_touch_move(self.mouse-x, self.mouse-y);
+        }
+    }
+}

@@ -1,0 +1,44 @@
+[env]
+PKG_CONFIG_ALLOW_CROSS = "1"
+PKG_CONFIG_SYSROOT_DIR = "/Volumes/SSD Datos/Users/javi/rpi-sysroot"
+PKG_CONFIG_PATH = "/Volumes/SSD Datos/Users/javi/rpi-sysroot/usr/lib/arm-linux-gnueabihf/pkgconfig"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "armv7-unknown-linux-gnueabihf-gcc"
+rustflags = [
+    "-C", "link-arg=--sysroot=/Volumes/SSD Datos/Users/javi/rpi-sysroot",
+    "-C", "link-arg=-B/Volumes/SSD Datos/Users/javi/rpi-sysroot/usr/lib/arm-linux-gnueabihf/",
+    "-C", "link-arg=-L/Volumes/SSD Datos/Users/javi/rpi-sysroot/usr/lib/arm-linux-gnueabihf/",
+    "-C", "link-arg=-L/Volumes/SSD Datos/Users/javi/rpi-sysroot/lib/arm-linux-gnueabihf/",
+    "-C", "link-arg=-lpng16",
+    "-C", "link-arg=-lz",
+    "-C", "link-arg=-lexpat",
+    "-C", "link-arg=-luuid",
+    "-C", "link-arg=-lbz2",
+    "-C", "link-arg=-lbrotlidec",
+    "-C", "link-arg=-lbrotlicommon",
+    "-C", "link-arg=-lmtdev",
+    "-C", "link-arg=-ludev",
+    "-C", "link-arg=-levdev",
+    "-C", "link-arg=-lwacom",
+    "-C", "link-arg=-lgudev-1.0",
+    "-C", "link-arg=-lgobject-2.0",
+    "-C", "link-arg=-lglib-2.0",
+    "-C", "link-arg=-lffi",
+    "-C", "link-arg=-lxml2",
+    "-C", "link-arg=-lpcre2-8",
+    "-C", "link-arg=-lmount",
+    "-C", "link-arg=-lblkid",
+    "-C", "link-arg=-lsystemd",
+    "-C", "link-arg=-lcap",
+    "-C", "link-arg=-lzstd",
+    "-C", "link-arg=-ldrm",
+    "-C", "link-arg=-lgbm",
+    "-C", "link-arg=-lwayland-client",
+    "-C", "link-arg=-lwayland-server",
+    "-C", "link-arg=-lwayland-egl",
+    "-C", "link-arg=-lGLESv2",
+    "-C", "link-arg=-lEGL",
+    "-C", "link-arg=-lfontconfig",
+    "-C", "link-arg=-lfreetype",
+]

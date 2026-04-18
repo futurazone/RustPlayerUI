@@ -1,3 +1,16 @@
+//! Punto de entrada de PiPlayer Rust UI.
+//!
+//! Orquesta la inicialización y conecta los módulos:
+//! - `app_state` → estado compartido (AppState con Rc<RefCell<>>)
+//! - `touch_handlers` → eventos touch globales (down/move/up + long press)
+//! - `callbacks` → callbacks de UI de Slint (botones, navegación)
+//! - `player_sync` → sincronización con el servidor MPD (status, progress, watchdog)
+//! - `warp` → animación de salto rápido por letra del alfabeto
+//! - `physics` → física del carrusel horizontal y scroll vertical
+//!
+//! El timer tick (~60fps) coordina: long press → status → warp → watchdog →
+//! biblioteca → imágenes async → progress → física vertical → swiper + reciclaje.
+
 mod api;
 mod app_state;
 mod callbacks;

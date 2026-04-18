@@ -1,3 +1,12 @@
+//! Sincronización del estado del reproductor con el servidor MPD.
+//!
+//! - `process_status_update`: procesa cada poll de status (cada 1s) → actualiza
+//!   metadata, botones (con check optimista), progress sync, y watchdog auto-play
+//! - `interpolate_progress`: entre polls, interpola la posición local para que
+//!   la barra de progreso avance suavemente (~60fps)
+//! - `check_inactivity_watchdog`: vuelve al Selector si el Player lleva 30s
+//!   parado sin interacción del usuario
+
 use std::time::Instant;
 
 use crate::api;

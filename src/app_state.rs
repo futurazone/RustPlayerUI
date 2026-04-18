@@ -1,3 +1,9 @@
+//! Estado centralizado de la aplicación.
+//!
+//! `AppState` agrupa todos los `Rc<RefCell<>>` en un solo struct clonable.
+//! Cada closure de Slint recibe `state.clone()` (clona punteros Rc, no datos).
+//! Esto reemplaza los ~30 clones manuales que había en la versión monolítica.
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc;

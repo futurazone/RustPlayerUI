@@ -1,3 +1,11 @@
+//! Registro de callbacks de UI (todo excepto touch globales).
+//!
+//! Conecta las acciones de Slint con la lógica de negocio:
+//! - Navegación: back_to_selector, close_track_picker, album_clicked, track_clicked
+//! - Browser: toggle_browser_mode (cambia entre Albums y Playlists, resetea swiper)
+//! - Player: toggle_pause, play_next, play_prev, toggle_shuffle, toggle_repeat
+//!   (los toggles usan estado optimista con lock de 2s antes de sincronizar con servidor)
+
 use std::time::Instant;
 
 use slint::{ComponentHandle, Model};

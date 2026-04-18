@@ -1,3 +1,8 @@
+//! Cliente HTTP para la API del servidor MPD (blocking, se usa desde threads).
+//!
+//! Endpoints: /list (biblioteca), /playlists, /status (polling), /play,
+//! /queue, /pause, /shuffle, /repeat, /seek/fwd, /seek/back.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Default)]

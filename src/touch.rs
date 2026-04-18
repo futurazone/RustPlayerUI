@@ -1,3 +1,9 @@
+//! Estado del touch y calibración de coordenadas.
+//!
+//! `TouchState` trackea el gesto activo (inicio, posición, drag, long press).
+//! `transform_touch` convierte coordenadas raw del touchscreen del Pi (rotado 90°)
+//! a coordenadas de pantalla 1280×720. En macOS pasa las coordenadas tal cual.
+
 use std::time::Instant;
 
 pub struct TouchState {

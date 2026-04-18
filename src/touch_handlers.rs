@@ -1,3 +1,13 @@
+//! Gestión de touch global para las tres pantallas (Selector, Player, TrackPicker).
+//!
+//! Flujo: `register_touch_handlers` conecta los 3 eventos Slint (down/move/up).
+//! - Down: inicia tracking, detecta zona (alphabet bar, esquinas, swiper)
+//! - Move: arrastra swiper horizontal o scroll vertical, o desliza por alphabet bar
+//! - Up: resuelve la acción (tap centro/lateral, swipe, botón player, pista)
+//!
+//! `check_long_press` se llama desde el timer tick para abrir el TrackPicker
+//! al mantener pulsado sobre un álbum (~400ms).
+
 use std::rc::Rc;
 use std::time::Instant;
 

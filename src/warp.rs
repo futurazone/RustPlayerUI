@@ -1,3 +1,10 @@
+//! Animación de salto rápido por letra del Alphabet Bar.
+//!
+//! Máquina de estados: None → Exiting (fade out + slide) → Entering (fade in + slide) → None.
+//! `trigger_warp_jump` calcula la dirección más corta (circular) hacia el álbum objetivo.
+//! `process_warp_tick` anima cada frame; devuelve `ExitingComplete` cuando el caller
+//! debe actualizar el lib_offset del swiper y transicionar a Entering.
+
 use std::time::Instant;
 
 use crate::api;

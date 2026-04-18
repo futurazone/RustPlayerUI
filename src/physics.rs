@@ -1,3 +1,10 @@
+//! Física del carrusel y scroll vertical (portado de la implementación Python).
+//!
+//! - `SwiperPhysics`: carrusel horizontal con spring-damper para snapping.
+//!   El reciclaje de slots (lib_offset) se gestiona en el timer tick de main.
+//! - `VerticalPhysics`: scroll del TrackPicker con fricción y bounce elástico
+//!   cuando se sale de los límites (min_offset / max_offset).
+
 pub struct SwiperPhysics {
     pub offset_x: f32,
     pub velocity: f32,

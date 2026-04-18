@@ -1,3 +1,10 @@
+//! Utilidades de UI: carga de imágenes async y construcción de datos para Slint.
+//!
+//! `ImageState` es la caché de imágenes (evita recargas). Las imágenes se cargan
+//! en threads separados y llegan por canal mpsc al timer tick.
+//! `get_item_slint` construye un `AlbumData` para un slot del carrusel,
+//! resolviendo el índice circular y lanzando carga async si es necesario.
+
 use crate::api;
 use slint::Image;
 use std::collections::{HashMap, HashSet};

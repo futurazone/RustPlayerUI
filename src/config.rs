@@ -1,4 +1,7 @@
-// --- CONFIGURACIÓN UI / TOUCH ---
+//! Constantes de layout y thresholds de interacción para 1280×720.
+//!
+//! Todas las coordenadas están calibradas para la pantalla del Pi.
+//! Las zonas de hit-test del Player y TrackPicker se definen aquí.
 pub const SCREEN_WIDTH: f32 = 1280.0;
 pub const SCREEN_HEIGHT: f32 = 720.0;
 pub const CENTER_X: f32 = 640.0;

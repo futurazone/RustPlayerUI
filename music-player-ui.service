@@ -1,0 +1,24 @@
+[Unit]
+Description=PiPlayer Rust UI (Slint)
+After=music-player.service
+Requires=music-player.service
+
+[Service]
+Type=simple
+User=javi
+WorkingDirectory=/home/javi/player/ui
+# Variables para que Slint rinda al máximo en la Pi
+Environment="SLINT_BACKEND=linuxkms"
+Environment="SLINT_FULLSCREEN=1"
+Environment="RUST_LOG=warn"
+# Ruta al binario (asumiendo que lo dejas en el raíz de la carpeta ui)
+ExecStart=/home/javi/player/ui/ui
+Restart=always
+RestartSec=3
+
+# Registro de logs
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

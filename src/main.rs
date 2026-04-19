@@ -122,8 +122,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 let Ok(mut last) = last_tick.try_borrow_mut() else {
                     return;
                 };
-                let dt = now.duration_since(*last).as_secs_f32();
+                let mut dt = now.duration_since(*last).as_secs_f32();
                 *last = now;
+                // CAP de dt para evitar saltos locos en la física si hay lag
+                if dt > 0.05 { dt = 0.05; }
                 dt
             };
 
@@ -175,8 +177,26 @@ fn main() -> Result<(), slint::PlatformError> {
             // 5. Procesamiento de datos de la API (Biblioteca)
             if let Ok((new_albums, new_playlists)) = lib_rx.try_recv() {
                 log::info!("API: Real data received, updating UI models...");
+                
                 *state.albums.borrow_mut() = new_albums;
                 *state.playlists.borrow_mut() = new_playlists;
+                
+                // Trigger windowed pre-loading
+                if let (Ok(mut img_s), Ok(mode)) = (
+                    state.image_state.try_borrow_mut(),
+                    state.current_mode.try_borrow(),
+                ) {
+                    let s = state.swiper.borrow();
+                    ui_utils::preload_neighborhood(
+                        &mode,
+                        &state.albums.borrow(),
+                        &state.playlists.borrow(),
+                        &mut img_s,
+                        &state.img_tx,
+                        s.lib_offset,
+                    );
+                }
+
                 if let Some(ui) = ui_weak.upgrade() {
                     if let (Ok(mut img_s), Ok(mode)) = (
                         state.image_state.try_borrow_mut(),
@@ -208,6 +228,7 @@ fn main() -> Result<(), slint::PlatformError> {
             // 6. Procesamiento de imágenes asíncronas
             let mut loaded_any = false;
             while let Ok((path, width, height, pixels)) = img_rx.try_recv() {
+                log::info!("Image: Received loaded pixels for {}", path);
                 let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
                     &pixels, width, height,
                 );
@@ -215,6 +236,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Ok(mut img_s) = state.image_state.try_borrow_mut() {
                     img_s.cache.insert(path.clone(), img);
                     img_s.loading.remove(&path);
+                    
+                    // Cleanup cache if too big
+                    ui_utils::cleanup_cache(&mut img_s, state.swiper.borrow().lib_offset);
                 }
                 loaded_any = true;
             }
@@ -301,6 +325,16 @@ fn main() -> Result<(), slint::PlatformError> {
                             state.image_state.try_borrow_mut(),
                             state.current_mode.try_borrow(),
                         ) {
+                            // Pre-load neighbors for the new position
+                            ui_utils::preload_neighborhood(
+                                &mode,
+                                &state.albums.borrow(),
+                                &state.playlists.borrow(),
+                                &mut img_s,
+                                &state.img_tx,
+                                lib_offset,
+                            );
+
                             let albums = state.albums.borrow();
                             let playlists = state.playlists.borrow();
                             for i in 0..7 {

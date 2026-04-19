@@ -26,7 +26,10 @@ pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &
     ui.set_current_track_artist(
         status
             .artist
-            .clone()
+            .as_ref()
+            .or(status.artist_name.as_ref())
+            .or(status.album_artist.as_ref())
+            .cloned()
             .unwrap_or_else(|| "---".into())
             .into(),
     );
@@ -53,21 +56,27 @@ pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &
 
     // Update Progress Sync
     let pos = status.position.unwrap_or(0.0);
-    let dur = status.duration.unwrap_or(1.0);
+    let dur = status.duration.unwrap_or(0.0).max(1.0); // Evitar división por cero
+    
+    // Si ha cambiado la canción, reseteamos progreso visual inmediatamente
+    let new_track_id = status.track_id.clone();
+    let mut last_id = state.last_track_id.borrow_mut();
+    if new_track_id != *last_id {
+        log::info!("Sync: New track detected, resetting progress bar");
+        ui.set_progress_pos(0.0);
+        ui.set_time_label("0:00".into());
+        *last_id = new_track_id;
+    }
+
     *state.last_sync_pos.borrow_mut() = pos;
     *state.last_sync_dur.borrow_mut() = dur;
     *state.last_sync_time.borrow_mut() = Instant::now();
 
-    if !is_playing_now {
-        ui.set_progress_pos(if dur > 0.0 {
-            (pos / dur).clamp(0.0, 1.0)
-        } else {
-            0.0
-        });
-        let mins = (pos as i32) / 60;
-        let secs = (pos as i32) % 60;
-        ui.set_time_label(format!("{}:{:02}", mins, secs).into());
-    }
+    // Actualización inmediata si no estamos interpolando (o si acabamos de recibir el status)
+    ui.set_progress_pos((pos / dur).clamp(0.0, 1.0));
+    let mins = (pos as i32) / 60;
+    let secs = (pos as i32) % 60;
+    ui.set_time_label(slint::format!("{}:{:02}", mins, secs));
 
     // Watchdog: Automático a Player si empieza la música
     let old_state = state.playback_state.borrow().clone();

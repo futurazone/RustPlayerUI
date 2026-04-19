@@ -46,6 +46,10 @@ pub struct AppState {
     pub last_sync_pos: Rc<RefCell<f32>>,
     pub last_sync_dur: Rc<RefCell<f32>>,
     pub last_sync_time: Rc<RefCell<Instant>>,
+    // Persistencia de posición entre modos (offset_x, lib_offset)
+    pub albums_pos: Rc<RefCell<(f32, i32)>>,
+    pub playlists_pos: Rc<RefCell<(f32, i32)>>,
+    pub last_track_id: Rc<RefCell<Option<String>>>,
     // API
     pub api_url: String,
 }
@@ -98,6 +102,9 @@ impl AppState {
             last_sync_pos: Rc::new(RefCell::new(0.0f32)),
             last_sync_dur: Rc::new(RefCell::new(1.0f32)),
             last_sync_time: Rc::new(RefCell::new(Instant::now())),
+            albums_pos: Rc::new(RefCell::new((0.0f32, -3))),
+            playlists_pos: Rc::new(RefCell::new((0.0f32, -3))),
+            last_track_id: Rc::new(RefCell::new(None)),
             api_url,
         };
 

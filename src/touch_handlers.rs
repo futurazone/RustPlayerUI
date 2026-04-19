@@ -59,6 +59,7 @@ fn resolve_alphabet_char(x: f32) -> char {
 fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f32, raw_y: f32) {
     *state.last_interaction.borrow_mut() = Instant::now();
     let (x, y) = transform_touch(raw_x, raw_y);
+    log::info!("Touch DOWN: Raw({:.1}, {:.1}) -> Transformed({:.1}, {:.1})", raw_x, raw_y, x, y);
     let mut ts = state.touch.borrow_mut();
     let now = Instant::now();
     ts.active = true;
@@ -244,28 +245,43 @@ fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f3
                     && duration < TAP_MAX_DURATION_MS
                 {
                     if slot == 0 {
-                        if *state.current_mode.borrow() == api::BrowserMode::Albums {
-                            if let Some(item_data) = state.model.row_data(3) {
-                                log::info!("Navigation: Go to Player (TAP Center)");
-                                u.set_album_title(item_data.title.clone());
-                                u.set_album_artist(item_data.artist.clone());
-                                u.set_bg_cover(item_data.cover.clone());
-                                u.set_current_screen(ScreenState::Player);
+                        // Reproducción del elemento CENTRAL
+                        let mode = *state.current_mode.borrow();
+                        let target_idx = state.swiper.borrow().lib_offset + 3;
+                        let api = state.api_url.clone();
 
-                                let albums = state.albums.borrow();
-                                if let Some(album_data) = albums.get(3) {
-                                    if let Some(tracks) = &album_data.tracks {
-                                        let track_ids: Vec<String> =
-                                            tracks.iter().map(|t| t.track_id.clone()).collect();
-                                        let api = state.api_url.clone();
-                                        std::thread::spawn(move || {
-                                            let _ = api::send_queue(&api, track_ids);
-                                        });
-                                    }
+                        if let Some(item_data) = state.model.row_data(3) {
+                            log::info!("Player: Navigation to Center Item ({:?})", mode);
+                            u.set_album_title(item_data.title.clone());
+                            u.set_album_artist(item_data.artist.clone());
+                            u.set_bg_cover(item_data.cover.clone());
+                            u.set_current_screen(ScreenState::Player);
+                            u.set_is_playing(true);
+                        }
+
+                        if mode == api::BrowserMode::Albums {
+                            let albums = state.albums.borrow().clone();
+                            if target_idx >= 0 && (target_idx as usize) < albums.len() {
+                                if let Some(tracks) = &albums[target_idx as usize].tracks {
+                                    let track_ids: Vec<String> = tracks.iter().map(|t| t.track_id.clone()).collect();
+                                    std::thread::spawn(move || {
+                                        let _ = api::send_queue(&api, track_ids);
+                                        let _ = api::send_player_command_get(&api, "play");
+                                    });
                                 }
                             }
                         } else {
-                            u.set_current_screen(ScreenState::Player);
+                            let playlists = state.playlists.borrow().clone();
+                            if target_idx >= 0 && (target_idx as usize) < playlists.len() {
+                                if let Some(id) = playlists[target_idx as usize].id.clone() {
+                                    std::thread::spawn(move || {
+                                        if let Ok(track_ids) = api::fetch_playlist_tracks(&api, &id) {
+                                            let _ = api::send_queue(&api, track_ids);
+                                            let _ = api::send_player_command_get(&api, "play");
+                                        }
+                                    });
+                                }
+                            }
                         }
                     } else {
                         log::info!(

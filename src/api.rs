@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct Track {
     pub track_id: String,
     pub title: String,
+    #[serde(alias = "artist_name")]
     pub artist: Option<String>,
     pub duration: Option<f32>,
     pub track_number: Option<i32>,
@@ -43,7 +44,7 @@ pub struct LibraryResponse {
     pub albums: Vec<Album>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub enum BrowserMode {
     Albums,
     Playlists,
@@ -68,6 +69,8 @@ pub fn fetch_real_playlists(api_url: &str) -> Result<Vec<Playlist>, Box<dyn std:
 pub struct PlayerStatus {
     pub title: Option<String>,
     pub artist: Option<String>,
+    pub artist_name: Option<String>,
+    pub album_artist: Option<String>,
     pub album: Option<String>,
     pub paused: Option<bool>,
     pub position: Option<f32>,
@@ -75,16 +78,26 @@ pub struct PlayerStatus {
     pub shuffle: Option<bool>,
     pub repeat: Option<bool>,
     pub state: Option<String>, // "play", "pause", "stop"
+    pub track_id: Option<String>,
+    pub cover: Option<String>,
+    pub cover_thumb: Option<String>,
 }
 
 pub fn get_real_status(api_url: &str) -> Result<PlayerStatus, Box<dyn std::error::Error>> {
     let resp = reqwest::blocking::get(format!("{}/status", api_url))?;
-    let status: PlayerStatus = resp.json()?;
+    let text = resp.text()?; 
+    let status: PlayerStatus = serde_json::from_str(&text)?;
     Ok(status)
 }
 
-pub fn send_player_command(api_url: &str, command: &str) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("API: Sending command {} to {}", command, api_url);
+pub fn send_player_command_get(api_url: &str, command: &str) -> Result<(), Box<dyn std::error::Error>> {
+    log::info!("API: Sending GET command {} to {}", command, api_url);
+    let _ = reqwest::blocking::get(format!("{}/{}", api_url, command))?;
+    Ok(())
+}
+
+pub fn send_player_command_post(api_url: &str, command: &str) -> Result<(), Box<dyn std::error::Error>> {
+    log::info!("API: Sending POST command {} to {}", command, api_url);
     let client = reqwest::blocking::Client::new();
     let _ = client.post(format!("{}/{}", api_url, command)).send()?;
     Ok(())
@@ -93,6 +106,25 @@ pub fn send_player_command(api_url: &str, command: &str) -> Result<(), Box<dyn s
 #[derive(Serialize)]
 struct QueueRequest<'a> {
     tracks: &'a Vec<String>,
+}
+
+pub fn fetch_playlist_tracks(api_url: &str, playlist_id: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    log::info!("API: Fetching tracks for playlist {} from {}/playlists/{}", playlist_id, api_url, playlist_id);
+    let resp = reqwest::blocking::get(format!("{}/playlists/{}", api_url, playlist_id))?;
+    
+    // Usamos una estructura local para deserializar solo lo necesario
+    #[derive(Deserialize)]
+    struct LocalTrack {
+        track_id: String,
+    }
+    #[derive(Deserialize)]
+    struct LocalPlaylistDetail {
+        tracks: Vec<LocalTrack>,
+    }
+    
+    let detail: LocalPlaylistDetail = resp.json()?;
+    let ids = detail.tracks.into_iter().map(|t| t.track_id).collect();
+    Ok(ids)
 }
 
 pub fn send_queue(api_url: &str, track_ids: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {

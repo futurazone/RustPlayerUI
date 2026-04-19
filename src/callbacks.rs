@@ -86,9 +86,23 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
 
                 let lib_off = {
                     let mut s = state.swiper.borrow_mut();
-                    s.lib_offset = -3;
-                    s.offset_x = 0.0;
-                    s.snap_target = 0.0;
+
+                    // PERSISTENCIA: Guardamos posición actual y recuperamos la del nuevo modo
+                    if new_mode == api::BrowserMode::Playlists {
+                        // Veníamos de Albums -> Guardamos en albums_pos
+                        *state.albums_pos.borrow_mut() = (s.offset_x, s.lib_offset);
+                        let (off, loff) = *state.playlists_pos.borrow();
+                        s.offset_x = off;
+                        s.lib_offset = loff;
+                    } else {
+                        // Veníamos de Playlists -> Guardamos en playlists_pos
+                        *state.playlists_pos.borrow_mut() = (s.offset_x, s.lib_offset);
+                        let (off, loff) = *state.albums_pos.borrow();
+                        s.offset_x = off;
+                        s.lib_offset = loff;
+                    }
+
+                    s.snap_target = s.offset_x; // Snap al mismo sitio donde estábamos
                     s.velocity = 0.0;
                     s.lib_offset
                 };
@@ -113,6 +127,16 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                 if let Some(item_data) = state.model.row_data(3) {
                     ui.set_bg_cover(item_data.cover.clone());
                 }
+
+                // PRECARGA: Disparamos la carga del vecindario inmediatamente al cambiar de modo
+                crate::ui_utils::preload_neighborhood(
+                    &new_mode,
+                    &albums,
+                    &playlists,
+                    &mut img_s,
+                    &state.img_tx,
+                    lib_off,
+                );
             }
         });
     }
@@ -129,6 +153,41 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                     ui.set_album_artist(item_data.artist.clone());
                     ui.set_bg_cover(item_data.cover.clone());
                     ui.set_current_screen(ScreenState::Player);
+
+                    // Trigger playback
+                    let albums = state.albums.borrow().clone();
+                    let playlists = state.playlists.borrow().clone();
+                    let s = state.swiper.borrow();
+                    let mode = *state.current_mode.borrow();
+                    let target_idx = s.lib_offset + visual_idx as i32;
+                    let api = state.api_url.clone();
+
+                    ui.set_is_playing(true);
+                    *state.playback_state.borrow_mut() = "play".to_string();
+
+                    if mode == api::BrowserMode::Albums {
+                        if target_idx >= 0 && (target_idx as usize) < albums.len() {
+                            if let Some(tracks) = &albums[target_idx as usize].tracks {
+                                let track_ids: Vec<String> = tracks.iter().map(|t| t.track_id.clone()).collect();
+                                std::thread::spawn(move || {
+                                    let _ = api::send_queue(&api, track_ids);
+                                    let _ = api::send_player_command_get(&api, "play");
+                                });
+                            }
+                        }
+                    } else {
+                        // Modo Playlists: Fetch y Play (Estilo Python)
+                        if target_idx >= 0 && (target_idx as usize) < playlists.len() {
+                            if let Some(id) = playlists[target_idx as usize].id.clone() {
+                                std::thread::spawn(move || {
+                                    if let Ok(track_ids) = api::fetch_playlist_tracks(&api, &id) {
+                                        let _ = api::send_queue(&api, track_ids);
+                                        let _ = api::send_player_command_get(&api, "play");
+                                    }
+                                });
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -144,7 +203,7 @@ fn register_player_actions(ui: &AppWindow, state: &AppState) {
         ui.on_toggle_pause(move || {
             let api = api_url.clone();
             std::thread::spawn(move || {
-                let _ = api::send_player_command(&api, "pause");
+                let _ = api::send_player_command_get(&api, "pause");
             });
         });
     }
@@ -153,7 +212,7 @@ fn register_player_actions(ui: &AppWindow, state: &AppState) {
         ui.on_play_next(move || {
             let api = api_url.clone();
             std::thread::spawn(move || {
-                let _ = api::send_player_command(&api, "seek/fwd");
+                let _ = api::send_player_command_get(&api, "next");
             });
         });
     }
@@ -162,7 +221,7 @@ fn register_player_actions(ui: &AppWindow, state: &AppState) {
         ui.on_play_prev(move || {
             let api = api_url.clone();
             std::thread::spawn(move || {
-                let _ = api::send_player_command(&api, "seek/back");
+                let _ = api::send_player_command_get(&api, "prev");
             });
         });
     }
@@ -178,7 +237,7 @@ fn register_player_actions(ui: &AppWindow, state: &AppState) {
 
                 let api = state.api_url.clone();
                 std::thread::spawn(move || {
-                    let _ = api::send_player_command(&api, "shuffle");
+                    let _ = api::send_player_command_post(&api, "shuffle");
                 });
             }
         });
@@ -195,7 +254,7 @@ fn register_player_actions(ui: &AppWindow, state: &AppState) {
 
                 let api = state.api_url.clone();
                 std::thread::spawn(move || {
-                    let _ = api::send_player_command(&api, "repeat");
+                    let _ = api::send_player_command_post(&api, "repeat");
                 });
             }
         });

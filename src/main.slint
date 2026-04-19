@@ -132,8 +132,6 @@ export component AppWindow inherits Window {
     callback toggle_pause();
     callback play_next();
     callback play_prev();
-    callback rewind();
-    callback forward();
     callback toggle_shuffle();
     callback toggle_repeat();
 
@@ -235,6 +233,9 @@ export component AppWindow inherits Window {
             width: 100%;
             height: 90px;
             background: #00000044; // Sombreado ligero superior
+            opacity: browser-mode == BrowserMode.albums ? 1 : 0;
+            visible: self.opacity > 0;
+            animate opacity { duration: 250ms; }
             
             HorizontalLayout {
                 padding-left: 40px;
@@ -262,7 +263,7 @@ export component AppWindow inherits Window {
 
         VerticalLayout {
             padding: 20px;
-            padding-top: 100px;
+            padding-top: 60px; // Subido de 100px
             padding-bottom: 25px;
             spacing: 0px;
 
@@ -272,7 +273,7 @@ export component AppWindow inherits Window {
                 
                 VerticalLayout {
                     horizontal-stretch: 45;
-                    spacing: 45px;
+                    spacing: 20px; // Reducido de 45px para subir botones
                     alignment: start;
                     
                     Rectangle {
@@ -321,7 +322,7 @@ export component AppWindow inherits Window {
                         Text { text: current_track_artist; font-size: 36px; color: #a6b8d1; overflow: elide; }
                     }
 
-                    Rectangle { height: 60px; } 
+                    Rectangle { height: 20px; } // Reducido de 60px para subir controles
 
                     HorizontalLayout {
                         alignment: center;
@@ -332,7 +333,7 @@ export component AppWindow inherits Window {
                             v-scale: root.vertical_scaling;
                             icon-padding: 28px;
                             bg-color: #262626;
-                            clicked => { rewind(); }
+                            clicked => { play_prev(); }
                         }
                         IconButton {
                             icon: is_playing ? icon_pause : icon_play;
@@ -348,7 +349,7 @@ export component AppWindow inherits Window {
                             v-scale: root.vertical_scaling;
                             icon-padding: 28px;
                             bg-color: #262626;
-                            clicked => { forward(); }
+                            clicked => { play_next(); }
                         }
                     }
                 }
@@ -366,6 +367,7 @@ export component AppWindow inherits Window {
                     background: #333;
                     border-radius: 5px;
                     Rectangle {
+                        x: 0;
                         width: parent.width * progress_pos;
                         height: 100%;
                         background: #007bff;

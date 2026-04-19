@@ -21,18 +21,16 @@ pub const MODE_SWIPE_DY_MIN: f32 = 70.0;
 pub const MODE_SWIPE_DX_MAX: f32 = 50.0;
 
 // Player Screen Hit-Test Zones (1280x720)
-// Row 1: Controls (Prev, Play, Next)
-pub const PLAYER_CONTROLS_Y: f32 = 414.0;
-pub const PLAYER_CONTROLS_CENTER_X: f32 = 943.0;
-pub const PLAYER_PREV_X: f32 = 751.0;
-pub const PLAYER_PLAY_X: f32 = 943.0;
-pub const PLAYER_NEXT_X: f32 = 1136.0;
+// Row 1: Controls (Prev, Play, Next) - Ajustado a columna derecha
+pub const PLAYER_CONTROLS_Y: f32 = 415.0; // Subido
+pub const PLAYER_PREV_X: f32 = 740.0;
+pub const PLAYER_PLAY_X: f32 = 930.0;
+pub const PLAYER_NEXT_X: f32 = 1120.0;
 
-// Row 2: Options (Shuffle, Repeat)
-pub const PLAYER_OPTIONS_Y: f32 = 577.0;
-pub const PLAYER_OPTIONS_CENTER_X: f32 = 308.0;
-pub const PLAYER_SHUFFLE_X: f32 = 203.0;
-pub const PLAYER_REPEAT_X: f32 = 373.0;
+// Row 2: Options (Shuffle, Repeat) - Ajustado a columna izquierda (debajo de portada)
+pub const PLAYER_OPTIONS_Y: f32 = 560.0; // Subido
+pub const PLAYER_SHUFFLE_X: f32 = 206.0;
+pub const PLAYER_REPEAT_X: f32 = 380.0;
 
 pub const BUTTON_HIT_RADIUS: f32 = 70.0; // Slightly larger for better usability
 

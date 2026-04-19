@@ -71,15 +71,15 @@ impl SwiperPhysics {
         let commit_threshold = 0.18; // Sincronizado con commit_threshold en Python
 
         let slot = if velocity.abs() > flick_threshold {
-            // Predicción de inercia (flick) - Usamos 0.34 como en Python
-            let predicted_offset = dx + velocity * 0.34;
+            // Predicción de inercia (flick) - Duplicado a 0.68 para mayor recorrido
+            let predicted_offset = dx + velocity * 0.68;
             let mut s = (predicted_offset / self.spacing).round() as i32;
 
             // Asegurar que al menos se mueva un slot en la dirección del flick si hay intención
             if s == 0 && dx.abs() > (self.spacing * 0.1) {
                 s = if velocity > 0.0 { 1 } else { -1 };
             }
-            s.clamp(-6, 6)
+            s.clamp(-15, 15)
         } else {
             // Snap simple basado en desplazamiento real
             if displacement_slots > commit_threshold {

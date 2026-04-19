@@ -7,18 +7,24 @@ Requires=music-player.service
 Type=simple
 User=javi
 WorkingDirectory=/home/javi/player/ui
-# Variables para que Slint rinda al máximo en la Pi
+# Asignamos una sesión de login para que libseat pueda activar el hardware
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+
+# Grupos necesarios para hardware directo
+SupplementaryGroups=video render input
+
+# Variables para Slint
 Environment="SLINT_BACKEND=linuxkms"
 Environment="SLINT_FULLSCREEN=1"
 Environment="RUST_LOG=warn"
-# Ruta al binario (asumiendo que lo dejas en el raíz de la carpeta ui)
+
 ExecStart=/home/javi/player/ui/ui
 Restart=always
 RestartSec=3
-
-# Registro de logs
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

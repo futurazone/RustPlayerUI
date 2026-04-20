@@ -12,6 +12,7 @@ use slint::{ComponentHandle, Model};
 
 use crate::api;
 use crate::app_state::AppState;
+use crate::config::{CENTER_INDEX, VISIBLE_SLOTS};
 use crate::ui_utils::{get_item_slint, go_to_selector};
 use crate::{AppWindow, BrowserMode, ScreenState};
 
@@ -110,21 +111,21 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                 let mut img_s = state.image_state.borrow_mut();
                 let albums = state.albums.borrow();
                 let playlists = state.playlists.borrow();
-                for i in 0..7 {
+                for i in 0..VISIBLE_SLOTS {
                     state.model.set_row_data(
-                        i,
+                        i as usize,
                         get_item_slint(
                             &new_mode,
                             &albums,
                             &playlists,
                             &mut img_s,
                             &state.img_tx,
-                            lib_off + i as i32,
+                            lib_off + i,
                         ),
                     );
                 }
 
-                if let Some(item_data) = state.model.row_data(3) {
+                if let Some(item_data) = state.model.row_data(CENTER_INDEX as usize) {
                     ui.set_bg_cover(item_data.cover.clone());
                 }
 

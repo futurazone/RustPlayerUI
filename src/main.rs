@@ -94,11 +94,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Inicializar UI con modelo
     ui.set_visible_items(state.model.clone().into());
-    let x_pos: Vec<f32> = (-3..=3)
+    let x_pos: Vec<f32> = (-CENTER_INDEX..=CENTER_INDEX)
         .map(|i: i32| CENTER_X + (i as f32) * state.swiper.borrow().spacing)
         .collect();
     ui.set_x_positions(Rc::new(VecModel::from(x_pos)).into());
-    ui.set_center_index(3);
+    ui.set_center_index(CENTER_INDEX);
 
     // Hilos de background
     let (lib_rx, status_rx) = spawn_background_threads(&api_url);
@@ -151,7 +151,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             direction,
                         } => {
                             if let Ok(mut s) = state.swiper.try_borrow_mut() {
-                                s.lib_offset = target_idx - 3;
+                                s.lib_offset = target_idx - CENTER_INDEX;
                                 s.offset_x = 0.0;
                                 s.snap_target = 0.0;
                                 s.velocity = 0.0;
@@ -205,20 +205,20 @@ fn main() -> Result<(), slint::PlatformError> {
                         let s = state.swiper.borrow();
                         let albums = state.albums.borrow();
                         let playlists = state.playlists.borrow();
-                        for i in 0..7 {
+                        for i in 0..VISIBLE_SLOTS {
                             state.model.set_row_data(
-                                i,
+                                i as usize,
                                 get_item_slint(
                                     &mode,
                                     &albums,
                                     &playlists,
                                     &mut img_s,
                                     &state.img_tx,
-                                    s.lib_offset + i as i32,
+                                    s.lib_offset + i,
                                 ),
                             );
                         }
-                        if let Some(item_data) = state.model.row_data(3) {
+                        if let Some(item_data) = state.model.row_data(CENTER_INDEX as usize) {
                             ui.set_bg_cover(item_data.cover.clone());
                         }
                     }
@@ -237,14 +237,24 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Ok(mut img_s) = state.image_state.try_borrow_mut() {
                     img_s.cache.insert(path.clone(), img);
                     img_s.loading.remove(&path);
-                    
-                    // Cleanup cache if too big
-                    ui_utils::cleanup_cache(&mut img_s, state.swiper.borrow().lib_offset);
                 }
                 loaded_any = true;
                 uploaded_count += 1;
                 if uploaded_count >= 2 {
                     break;
+                }
+            }
+            
+            // Cleanup de caché una vez por tick si se cargaron imágenes
+            if loaded_any {
+                if let (Ok(mut img_s), Ok(mode)) = (state.image_state.try_borrow_mut(), state.current_mode.try_borrow()) {
+                    ui_utils::cleanup_cache(
+                        &mut img_s, 
+                        state.swiper.borrow().lib_offset,
+                        &mode,
+                        &state.albums.borrow(),
+                        &state.playlists.borrow()
+                    );
                 }
             }
 
@@ -282,43 +292,46 @@ fn main() -> Result<(), slint::PlatformError> {
                 let was_moving = s.is_moving;
                 let physics_updated = s.update(dt);
 
-                let mut recycled = loaded_any || recycled_from_warp;
+                let old_lib_offset = s.lib_offset;
                 while s.offset_x >= s.spacing {
                     s.lib_offset -= 1;
                     s.offset_x -= s.spacing;
                     s.snap_target -= s.spacing;
-                    recycled = true;
                 }
                 while s.offset_x <= -s.spacing {
                     s.lib_offset += 1;
                     s.offset_x += s.spacing;
                     s.snap_target += s.spacing;
-                    recycled = true;
                 }
+                
+                let lib_delta = s.lib_offset - old_lib_offset;
+                let recycled = lib_delta != 0 || loaded_any || recycled_from_warp;
+
                 (
                     s.is_moving || was_moving,
                     s.offset_x,
                     s.spacing,
                     s.lib_offset,
+                    lib_delta,
                     recycled,
                     physics_updated,
                 )
             };
 
-            let (is_moving, offset_x, spacing, lib_offset, recycled, physics_updated) =
+            let (is_moving, offset_x, spacing, lib_offset, lib_delta, recycled, physics_updated) =
                 update_result;
 
             // 10. Actualización Sincrónica de la UI
             if physics_updated || is_moving || recycled {
                 if let Some(ui) = ui_weak.upgrade() {
                     let off = offset_x;
-                    let x_pos: Vec<f32> = (-3..=3)
+                    let x_pos: Vec<f32> = (-CENTER_INDEX..=CENTER_INDEX)
                         .map(|i| CENTER_X + (i as f32) * spacing + off)
                         .collect();
                     ui.set_x_positions(Rc::new(VecModel::from(x_pos)).into());
 
                     let shift = (-off / spacing).round() as i32;
-                    let visual_center = (3 + shift).clamp(0, 6);
+                    let visual_center = (CENTER_INDEX + shift).clamp(0, VISIBLE_SLOTS - 1);
 
                     let center_changed = ui.get_center_index() != visual_center;
                     if center_changed || recycled {
@@ -330,29 +343,57 @@ fn main() -> Result<(), slint::PlatformError> {
                             state.image_state.try_borrow_mut(),
                             state.current_mode.try_borrow(),
                         ) {
-                            // Pre-load neighbors for the new position
-                            ui_utils::preload_neighborhood(
-                                &mode,
-                                &state.albums.borrow(),
-                                &state.playlists.borrow(),
-                                &mut img_s,
-                                &state.img_tx,
-                                lib_offset,
-                            );
-
                             let albums = state.albums.borrow();
                             let playlists = state.playlists.borrow();
-                            for i in 0..7 {
-                                state.model.set_row_data(
-                                    i,
-                                    get_item_slint(
-                                        &mode,
-                                        &albums,
-                                        &playlists,
-                                        &mut img_s,
-                                        &state.img_tx,
-                                        lib_offset + i as i32,
-                                    ),
+
+                            // OPTIMIZACIÓN: Solo recargamos todo si hubo un warp, un cambio de modo 
+                            // o si alguna imagen terminó de cargar (para que se vea en su slot).
+                            // Si solo es un desplazamiento suave de 1 slot, movemos los datos existentes.
+                            if !loaded_any && !recycled_from_warp && lib_delta == 1 {
+                                // Desplazamiento a la derecha (lib_offset aumenta): 
+                                // Corremos todos los items una posición a la izquierda y cargamos el nuevo a la derecha.
+                                for i in 0..(VISIBLE_SLOTS - 1) {
+                                    if let Some(d) = state.model.row_data((i + 1) as usize) {
+                                        state.model.set_row_data(i as usize, d);
+                                    }
+                                }
+                                state.model.set_row_data((VISIBLE_SLOTS - 1) as usize, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.img_tx, lib_offset + VISIBLE_SLOTS - 1));
+                            } else if !loaded_any && !recycled_from_warp && lib_delta == -1 {
+                                // Desplazamiento a la izquierda (lib_offset disminuye):
+                                // Corremos todos los items una posición a la derecha y cargamos el nuevo a la izquierda.
+                                for i in (1..VISIBLE_SLOTS).rev() {
+                                    if let Some(d) = state.model.row_data((i - 1) as usize) {
+                                        state.model.set_row_data(i as usize, d);
+                                    }
+                                }
+                                state.model.set_row_data(0, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.img_tx, lib_offset));
+                            } else {
+                                // Caso general: recarga completa (Warp, cambio de modo brusco o imagen cargada)
+                                for i in 0..VISIBLE_SLOTS {
+                                    state.model.set_row_data(
+                                        i as usize,
+                                        get_item_slint(
+                                            &mode,
+                                            &albums,
+                                            &playlists,
+                                            &mut img_s,
+                                            &state.img_tx,
+                                            lib_offset + i,
+                                        ),
+                                    );
+                                }
+                            }
+
+                            // Pre-load neighbors: solo si el offset cambió o si hubo recarga completa.
+                            // Esto asegura que la ventana de pre-carga siempre esté al día.
+                            if lib_delta != 0 || recycled_from_warp {
+                                ui_utils::preload_neighborhood(
+                                    &mode,
+                                    &albums,
+                                    &playlists,
+                                    &mut img_s,
+                                    &state.img_tx,
+                                    lib_offset,
                                 );
                             }
                         }

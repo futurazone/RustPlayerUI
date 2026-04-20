@@ -207,32 +207,56 @@ pub fn preload_neighborhood(
     }
 }
 
-pub fn cleanup_cache(img_state: &mut ImageState, current_lib_offset: i32) {
-    // Aumentamos el límite a 100 para ser más permisivos (ocupa ~25MB en RAM, muy seguro)
-    if img_state.cache.len() <= 100 {
+pub fn cleanup_cache(
+    img_state: &mut ImageState,
+    current_lib_offset: i32,
+    mode: &api::BrowserMode,
+    albums: &[api::Album],
+    playlists: &[api::Playlist],
+) {
+    // Solo actuamos si la caché supera un threshold razonable para evitar ciclos constantes.
+    // 100 imágenes son ~25MB en RAW, muy seguro incluso en la Pi Zero 2W.
+    if img_state.cache.len() < 100 {
         return;
     }
 
-    // En lugar de borrar TODO (que causa parpadeo/stutter), 
-    // mantenemos la caché (hasta 100) y solo vaciamos si llegamos a un hard-limit.
-    img_state.cache.retain(|path, _| {
-        // Reservamos las imágenes de sistema (assets)
-        if path.starts_with("assets/") {
-            return true;
+    // Identificamos el set de paths que DEBEMOS mantener (ventana de pre-carga + margen)
+    use crate::config::{PRELOAD_BACKWARD, PRELOAD_FORWARD};
+    let mut keep_paths = std::collections::HashSet::new();
+    
+    // Definimos un rango un poco más amplio que la precarga para evitar oscilaciones
+    let range = -(PRELOAD_BACKWARD + 10)..=(PRELOAD_FORWARD + 10);
+    
+    for i in range {
+        let abs_idx = current_lib_offset + i;
+        if *mode == api::BrowserMode::Albums {
+            let n = albums.len();
+            if n > 0 {
+                let album = &albums[abs_idx.rem_euclid(n as i32) as usize];
+                if let Some(p) = album.cover_thumb.as_ref().or(album.cover.as_ref()) {
+                    keep_paths.insert(p.clone());
+                }
+            }
+        } else {
+            let n = playlists.len();
+            if n > 0 {
+                let pl = &playlists[abs_idx.rem_euclid(n as i32) as usize];
+                if let Some(id) = pl.id.as_ref() {
+                    keep_paths.insert(format!("../data/playlists/covers/cover_{}.jpg", id));
+                }
+            }
         }
-        
-        // Estrategia simple: si el path contiene el ID de un vecino, lo intentamos mantener.
-        // Pero como el path es una URL o ruta de disco compleja, es difícil de parsear aquí.
-        // Para simplificar: solo borramos si nos hemos pasado mucho del límite.
-        // Una mejora real es borrar los menos usados recientemente.
-        true
-    });
+    }
 
-    // Si aún así hay demasiadas, borramos todo lo que NO esté en la lista que estamos "viendo"
-    // Pero para no complicar el ownership, simplemente vaciamos si llegamos a un hard-limit de 150.
-    if img_state.cache.len() > 150 {
-        log::info!("Cache: Hard limit reached, clearing old textures.");
-        img_state.cache.clear();
+    let before = img_state.cache.len();
+    img_state.cache.retain(|path, _| {
+        // Reservamos las imágenes de sistema (assets) y las del vecindario actual
+        path.starts_with("assets/") || keep_paths.contains(path)
+    });
+    
+    let after = img_state.cache.len();
+    if before != after {
+        log::info!("Cache: Cleaned up {} old images ({} -> {}). Freeing memory.", before - after, before, after);
     }
 }
 

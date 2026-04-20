@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use slint::VecModel;
 
 use crate::api;
-use crate::config::SWIPER_SPACING;
+use crate::config::{CENTER_INDEX, SWIPER_SPACING, VISIBLE_SLOTS};
 use crate::physics;
 use crate::touch::TouchState;
 use crate::ui_utils::{get_item_slint, ImageState};
@@ -73,7 +73,7 @@ impl AppState {
 
         // Modelo visual inicial (7 slots vacíos, se rellenan cuando llegan datos de la API)
         let model = Rc::new(VecModel::default());
-        for i in 0..7 {
+        for i in 0..VISIBLE_SLOTS {
             model.push(get_item_slint(
                 &current_mode.borrow(),
                 &albums.borrow(),
@@ -105,8 +105,8 @@ impl AppState {
             last_sync_pos: Rc::new(RefCell::new(0.0f32)),
             last_sync_dur: Rc::new(RefCell::new(1.0f32)),
             last_sync_time: Rc::new(RefCell::new(Instant::now())),
-            albums_pos: Rc::new(RefCell::new((0.0f32, -3))),
-            playlists_pos: Rc::new(RefCell::new((0.0f32, -3))),
+            albums_pos: Rc::new(RefCell::new((0.0f32, -CENTER_INDEX))),
+            playlists_pos: Rc::new(RefCell::new((0.0f32, -CENTER_INDEX))),
             last_track_id: Rc::new(RefCell::new(None)),
             last_bg_target_idx: Rc::new(RefCell::new(-1)),
             last_bg_update_time: Rc::new(RefCell::new(Instant::now())),

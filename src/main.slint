@@ -171,11 +171,11 @@ export component AppWindow inherits Window {
             // Carrusel de álbumes
             Rectangle {
                 height: 420px;
-                for idx in 7 : AlbumItem {
+                for item[idx] in visible_items : AlbumItem {
                     opacity: root.warp_opacity;
-                    title: visible_items[idx].title;
-                    artist: visible_items[idx].artist;
-                    cover: visible_items[idx].cover;
+                    title: item.title;
+                    artist: item.artist;
+                    cover: item.cover;
                     x-pos: x_positions[idx] + swiper_offset + root.warp_offset;
                     is-center: idx == center_index;
                     box-height: 420px;

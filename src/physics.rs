@@ -22,6 +22,8 @@ pub struct SwiperPhysics {
     pub lib_offset: i32,
 }
 
+use crate::config::CENTER_INDEX;
+
 impl SwiperPhysics {
     pub fn new() -> Self {
         Self {
@@ -34,7 +36,7 @@ impl SwiperPhysics {
             min_velocity: 12.0,
             is_moving: false,
             spacing: 350.0,
-            lib_offset: -3,
+            lib_offset: -CENTER_INDEX,
         }
     }
 

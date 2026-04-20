@@ -44,3 +44,7 @@ pub const TRACK_CLOSE_Y_MAX: f32 = 150.0;
 // Preload range (Cyclic)
 pub const PRELOAD_BACKWARD: i32 = 25;
 pub const PRELOAD_FORWARD: i32 = 25;
+
+// Swiper slots configuration
+pub const VISIBLE_SLOTS: i32 = 7;
+pub const CENTER_INDEX: i32 = VISIBLE_SLOTS / 2;

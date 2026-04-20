@@ -225,8 +225,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            // 6. Procesamiento de imágenes asíncronas
+            // 6. Procesamiento de imágenes asíncronas (limitado a 2 por frame para fluidez, como en Python)
             let mut loaded_any = false;
+            let mut uploaded_count = 0;
             while let Ok((path, width, height, pixels)) = img_rx.try_recv() {
                 log::info!("Image: Received loaded pixels for {}", path);
                 let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
@@ -241,6 +242,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui_utils::cleanup_cache(&mut img_s, state.swiper.borrow().lib_offset);
                 }
                 loaded_any = true;
+                uploaded_count += 1;
+                if uploaded_count >= 2 {
+                    break;
+                }
             }
 
             // 7. Interpolación local del tiempo (Progress Bar)
@@ -353,12 +358,24 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
 
-                    // Fondo actualizado SIEMPRE al final para usar datos frescos
+                    // Fondo: Solicitamos actualización diferida (Lazy Background como en Python)
                     if center_changed || recycled {
-                        if let Some(item_data) = state.model.row_data(visual_center as usize) {
-                            // Solo actualizamos si hay una imagen real cargada (no default transparente)
+                        if let (Ok(mut bg_idx), Ok(mut bg_time)) = (state.last_bg_target_idx.try_borrow_mut(), state.last_bg_update_time.try_borrow_mut()) {
+                            *bg_idx = visual_center as i32;
+                            *bg_time = now;
+                        }
+                    }
+                }
+            }
+
+            // 11. Ejecución diferida del fondo (150ms de margen para fluidez)
+            if let (Ok(mut bg_idx), Ok(bg_time)) = (state.last_bg_target_idx.try_borrow_mut(), state.last_bg_update_time.try_borrow()) {
+                if *bg_idx != -1 && now.duration_since(*bg_time).as_millis() > 150 {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        if let Some(item_data) = state.model.row_data(*bg_idx as usize) {
                             if item_data.cover.size().width > 0 {
                                 ui.set_bg_cover(item_data.cover.clone());
+                                *bg_idx = -1; // Consumido
                             }
                         }
                     }

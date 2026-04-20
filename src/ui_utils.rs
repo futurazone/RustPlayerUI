@@ -174,7 +174,8 @@ pub fn preload_neighborhood(
     tx: &mpsc::Sender<(String, u32, u32, Vec<u8>)>,
     current_offset: i32,
 ) {
-    let range = -7..=13;
+    use crate::config::{PRELOAD_BACKWARD, PRELOAD_FORWARD};
+    let range = -PRELOAD_BACKWARD..=PRELOAD_FORWARD; 
     let mut paths = HashSet::new();
 
     for i in range {

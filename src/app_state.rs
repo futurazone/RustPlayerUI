@@ -50,6 +50,9 @@ pub struct AppState {
     pub albums_pos: Rc<RefCell<(f32, i32)>>,
     pub playlists_pos: Rc<RefCell<(f32, i32)>>,
     pub last_track_id: Rc<RefCell<Option<String>>>,
+    // Lazy Background update
+    pub last_bg_target_idx: Rc<RefCell<i32>>,
+    pub last_bg_update_time: Rc<RefCell<Instant>>,
     // API
     pub api_url: String,
 }
@@ -105,6 +108,8 @@ impl AppState {
             albums_pos: Rc::new(RefCell::new((0.0f32, -3))),
             playlists_pos: Rc::new(RefCell::new((0.0f32, -3))),
             last_track_id: Rc::new(RefCell::new(None)),
+            last_bg_target_idx: Rc::new(RefCell::new(-1)),
+            last_bg_update_time: Rc::new(RefCell::new(Instant::now())),
             api_url,
         };
 

@@ -185,6 +185,7 @@ export component AppWindow inherits Window {
 
             // Información del álbum centrado
             VerticalLayout {
+                opacity: root.warp_opacity;
                 alignment: center;
                 spacing: 8px;
                 Text {
@@ -263,7 +264,7 @@ export component AppWindow inherits Window {
 
         VerticalLayout {
             padding: 20px;
-            padding-top: 60px; // Subido de 100px
+            padding-top: 110px; // Aumentado desde 60px para centrar verticalmente
             padding-bottom: 25px;
             spacing: 0px;
 

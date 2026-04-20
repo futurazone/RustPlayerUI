@@ -27,10 +27,12 @@ pub enum WarpState {
 }
 
 pub fn find_nearest_album(target_char: char, albums: &[api::Album]) -> i32 {
+    let target_char = target_char.to_ascii_uppercase();
     if target_char == '#' {
         for (i, alb) in albums.iter().enumerate() {
             if let Some(first) = alb.album_artist.as_deref().and_then(|s| s.chars().next()) {
-                if !char::is_alphabetic(first) {
+                let first_upper = first.to_ascii_uppercase();
+                if first_upper < 'A' {
                     return i as i32;
                 }
             }
@@ -38,25 +40,15 @@ pub fn find_nearest_album(target_char: char, albums: &[api::Album]) -> i32 {
         return 0;
     }
 
-    let target_val = target_char.to_ascii_uppercase() as i32;
-    let mut best_idx = -1;
-    let mut min_dist = i32::MAX;
-
     for (i, alb) in albums.iter().enumerate() {
         if let Some(first) = alb.album_artist.as_deref().and_then(|s| s.chars().next()) {
-            let first_val = first.to_ascii_uppercase() as i32;
-            let dist = (first_val - target_val).abs();
-            if dist < min_dist {
-                min_dist = dist;
-                best_idx = i as i32;
+            if first.to_ascii_uppercase() >= target_char {
+                return i as i32;
             }
         }
     }
 
-    if best_idx == -1 {
-        return (albums.len() as i32) - 1;
-    }
-    best_idx
+    (albums.len() as i32).saturating_sub(1)
 }
 
 /// Intenta iniciar una animación de warp jump hacia un álbum objetivo.
@@ -120,7 +112,8 @@ pub fn process_warp_tick(ws: &mut WarpState, ui: &crate::AppWindow) -> WarpTickR
             target_idx,
         } => {
             let elapsed = start_time.elapsed().as_secs_f32();
-            let progress = (elapsed / duration).clamp(0.0, 1.0);
+            let t = (elapsed / duration).clamp(0.0, 1.0);
+            let progress = t * t; // Ease-In Quad
 
             ui.set_warp_opacity(1.0 - progress);
             ui.set_warp_offset((direction * progress * (SCREEN_WIDTH * 0.7)).into());
@@ -140,7 +133,8 @@ pub fn process_warp_tick(ws: &mut WarpState, ui: &crate::AppWindow) -> WarpTickR
             direction,
         } => {
             let elapsed = start_time.elapsed().as_secs_f32();
-            let progress = (elapsed / duration).clamp(0.0, 1.0);
+            let t = (elapsed / duration).clamp(0.0, 1.0);
+            let progress = t * (2.0 - t); // Ease-Out Quad
 
             ui.set_warp_opacity(progress);
             ui.set_warp_offset((-direction * (1.0 - progress) * (SCREEN_WIDTH * 0.7)).into());

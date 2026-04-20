@@ -22,13 +22,13 @@ pub const MODE_SWIPE_DX_MAX: f32 = 50.0;
 
 // Player Screen Hit-Test Zones (1280x720)
 // Row 1: Controls (Prev, Play, Next) - Ajustado a columna derecha
-pub const PLAYER_CONTROLS_Y: f32 = 370.0; // Ajustado según logs
+pub const PLAYER_CONTROLS_Y: f32 = 420.0; // Ajustado (+50px por padding-top)
 pub const PLAYER_PREV_X: f32 = 740.0;
 pub const PLAYER_PLAY_X: f32 = 930.0;
 pub const PLAYER_NEXT_X: f32 = 1120.0;
 
 // Row 2: Options (Shuffle, Repeat) - Ajustado a columna izquierda (debajo de portada)
-pub const PLAYER_OPTIONS_Y: f32 = 535.0; // Media de logs (~535-540)
+pub const PLAYER_OPTIONS_Y: f32 = 585.0; // Ajustado (+50px por padding-top)
 pub const PLAYER_SHUFFLE_X: f32 = 135.0; 
 pub const PLAYER_REPEAT_X: f32 = 345.0;  // Ajustado según logs (~340-350)
 
@@ -40,3 +40,7 @@ pub const TRACK_LIST_Y_END: f32 = 680.0;
 pub const TRACK_ITEM_HEIGHT: f32 = 90.0;
 pub const TRACK_CLOSE_X_MIN: f32 = 1100.0;
 pub const TRACK_CLOSE_Y_MAX: f32 = 150.0;
+
+// Preload range (Cyclic)
+pub const PRELOAD_BACKWARD: i32 = 25;
+pub const PRELOAD_FORWARD: i32 = 25;

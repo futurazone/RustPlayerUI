@@ -9,11 +9,14 @@
 
 use std::time::Instant;
 
+use slint::Image;
 use crate::api;
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 use crate::ScreenState;
+use crate::ui_utils::{ImageState, spawn_image_loader};
 
 /// Procesa una actualización de estado del reproductor desde el hilo de polling.
+/// También carga la portada de la canción actual si es nueva.
 pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &crate::AppWindow) {
     // Update Metadata
     ui.set_current_track_title(
@@ -45,11 +48,11 @@ pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &
     let is_playing_now = status.state.as_deref() == Some("play");
     ui.set_is_playing(is_playing_now);
 
-    if state.opt_lock.borrow().elapsed().as_secs_f32() > 2.0 {
+    if state.playback.opt_lock.borrow().elapsed().as_secs_f32() > 2.0 {
         let sh = status.shuffle.unwrap_or(false);
         let rep = status.repeat.unwrap_or(false);
-        *state.opt_shuffle.borrow_mut() = sh;
-        *state.opt_repeat.borrow_mut() = rep;
+        *state.playback.opt_shuffle.borrow_mut() = sh;
+        *state.playback.opt_repeat.borrow_mut() = rep;
         ui.set_shuffle_on(sh);
         ui.set_repeat_on(rep);
     }
@@ -60,17 +63,29 @@ pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &
     
     // Si ha cambiado la canción, reseteamos progreso visual inmediatamente
     let new_track_id = status.track_id.clone();
-    let mut last_id = state.last_track_id.borrow_mut();
+    let mut last_id = state.playback.last_track_id.borrow_mut();
     if new_track_id != *last_id {
-        log::info!("Sync: New track detected, resetting progress bar");
+        log::info!("Sync: New track detected, resetting progress bar and loading cover");
         ui.set_progress_pos(0.0);
         ui.set_time_label("0:00".into());
         *last_id = new_track_id;
+
+        // Cargar portada de la nueva canción
+        if let Some(path) = status.cover_thumb.as_ref().or(status.cover.as_ref()) {
+            if let Ok(mut img_s) = state.library.image_state.try_borrow_mut() {
+                if let Some(cached) = img_s.cache.get(path) {
+                    ui.set_player_cover(cached.clone());
+                } else if !img_s.loading.contains(path) {
+                    img_s.loading.insert(path.clone());
+                    spawn_image_loader(path.clone(), state.library.img_tx.clone());
+                }
+            }
+        }
     }
 
-    *state.last_sync_pos.borrow_mut() = pos;
-    *state.last_sync_dur.borrow_mut() = dur;
-    *state.last_sync_time.borrow_mut() = Instant::now();
+    *state.playback.last_sync_pos.borrow_mut() = pos;
+    *state.playback.last_sync_dur.borrow_mut() = dur;
+    *state.playback.last_sync_time.borrow_mut() = Instant::now();
 
     // Actualización inmediata si no estamos interpolando (o si acabamos de recibir el status)
     ui.set_progress_pos((pos / dur).clamp(0.0, 1.0));
@@ -79,7 +94,7 @@ pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &
     ui.set_time_label(slint::format!("{}:{:02}", mins, secs));
 
     // Watchdog: Automático a Player si empieza la música
-    let old_state = state.playback_state.borrow().clone();
+    let old_state = state.playback.playback_state.borrow().clone();
     let new_status_state = status.state.clone().unwrap_or_else(|| "stop".into());
 
     if new_status_state == "play" && old_state != "play" {
@@ -90,36 +105,47 @@ pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &
     }
 
     if new_status_state != "play" && old_state == "play" {
-        *state.last_stop_time.borrow_mut() = Some(Instant::now());
+        *state.playback.last_stop_time.borrow_mut() = Some(Instant::now());
     } else if new_status_state == "play" {
-        *state.last_stop_time.borrow_mut() = None;
+        *state.playback.last_stop_time.borrow_mut() = None;
     }
 
-    *state.playback_state.borrow_mut() = new_status_state;
+    *state.playback.playback_state.borrow_mut() = new_status_state;
 }
 
 /// Comprueba la inactividad y vuelve al selector si corresponde (30s timeout).
 pub fn check_inactivity_watchdog(state: &AppState, ui: &crate::AppWindow) {
     let now = Instant::now();
-    let inactive_duration = now.duration_since(*state.last_interaction.borrow());
+    let inactive_duration = now.duration_since(*state.interaction.last_interaction.borrow());
+    let ps = state.playback.playback_state.borrow().clone();
+    let current_screen = ui.get_current_screen();
 
-    if ui.get_current_screen() == ScreenState::Player {
-        let ps = state.playback_state.borrow().clone();
-        if ps != "play" {
-            // Si no hay hora de parada grabada, usamos la última interacción
-            let stop_reference = state
-                .last_stop_time
-                .borrow()
-                .unwrap_or(*state.last_interaction.borrow());
-
-            if now.duration_since(stop_reference).as_secs() > 30
-                && inactive_duration.as_secs() > 30
-            {
-                log::info!(
-                    "Watchdog: 30s de inactividad en Player, volviendo al selector"
-                );
+    if ps == "play" && current_screen != ScreenState::Player {
+        // 1. Si está en el swiper (o track picker) reproduciendo, a los 30s vuelve al player
+        if inactive_duration.as_secs() > 30 {
+            log::info!("Watchdog: 30s de inactividad mientras suena la música, volviendo al Player");
+            ui.set_current_screen(ScreenState::Player);
+        }
+    } else if current_screen == ScreenState::Player {
+        if ps == "stop" {
+            // 2. Si está en el Player en STOP, a los 30s vuelve al swiper
+            if inactive_duration.as_secs() > 30 {
+                log::info!("Watchdog: 30s de inactividad en STOP, volviendo al Selector");
                 ui.set_current_screen(ScreenState::Selector);
-                *state.last_stop_time.borrow_mut() = None;
+            }
+        } else if ps == "pause" {
+            // 3. Si está en PAUSE (en el Player), a los 10 minutos (600s) pasa a STOP
+            if inactive_duration.as_secs() > 600 {
+                log::info!("Watchdog: 10 mins de inactividad en PAUSE, enviando comando STOP");
+                let api = state.api_url.clone();
+                std::thread::spawn(move || {
+                    let _ = crate::api::send_player_command_get(&api, "stop");
+                });
+                
+                // Actualizamos localmente para no repetir el comando y reiniciar el reloj de inactividad
+                // Así tendrá otros 30s en STOP antes de volver al swiper.
+                *state.playback.playback_state.borrow_mut() = "stop".to_string();
+                *state.interaction.last_interaction.borrow_mut() = Instant::now();
             }
         }
     }
@@ -127,10 +153,10 @@ pub fn check_inactivity_watchdog(state: &AppState, ui: &crate::AppWindow) {
 
 /// Interpola la posición de reproducción entre updates del servidor.
 pub fn interpolate_progress(state: &AppState, ui: &crate::AppWindow) {
-    if *state.playback_state.borrow() == "play" {
-        let elapsed = state.last_sync_time.borrow().elapsed().as_secs_f32();
-        let current_pos = *state.last_sync_pos.borrow() + elapsed;
-        let dur = *state.last_sync_dur.borrow();
+    if *state.playback.playback_state.borrow() == "play" {
+        let elapsed = state.playback.last_sync_time.borrow().elapsed().as_secs_f32();
+        let current_pos = *state.playback.last_sync_pos.borrow() + elapsed;
+        let dur = *state.playback.last_sync_dur.borrow();
         ui.set_progress_pos(if dur > 0.0 {
             (current_pos / dur).clamp(0.0, 1.0)
         } else {

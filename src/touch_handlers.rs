@@ -14,12 +14,13 @@ use std::time::Instant;
 use slint::{ComponentHandle, Model};
 
 use crate::api;
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 use crate::config::*;
 use crate::touch::transform_touch;
 use crate::ui_utils::go_to_selector;
 use crate::warp;
 use crate::{AppWindow, ScreenState, TrackData};
+use crate::screens;
 
 /// Registra los handlers de touch globales en la UI.
 pub fn register_touch_handlers(ui: &AppWindow, state: &AppState) {
@@ -48,19 +49,20 @@ pub fn register_touch_handlers(ui: &AppWindow, state: &AppState) {
 
 /// Resuelve la letra del alfabeto correspondiente a una coordenada X.
 fn resolve_alphabet_char(x: f32) -> char {
-    let calib_f = ((x - (SCREEN_WIDTH as f32 * 0.08))
-        / (SCREEN_WIDTH as f32 * (0.85 - 0.08)))
-        .clamp(0.0, 1.0);
+    let margin = 40.0;
+    let width = 1200.0; // 1280 - 40 - 40
+    let calib_f = ((x - margin) / width).clamp(0.0, 1.0);
     let alphabet = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let char_idx = (calib_f * (alphabet.len() as f32 - 1.0)).round() as usize;
+    let char_idx = (calib_f * alphabet.len() as f32).floor() as usize;
+    let char_idx = char_idx.min(alphabet.len() - 1);
     alphabet.chars().nth(char_idx).unwrap_or('#')
 }
 
 fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f32, raw_y: f32) {
-    *state.last_interaction.borrow_mut() = Instant::now();
+    *state.interaction.last_interaction.borrow_mut() = Instant::now();
     let (x, y) = transform_touch(raw_x, raw_y);
     log::info!("Touch DOWN: Raw({:.1}, {:.1}) -> Transformed({:.1}, {:.1})", raw_x, raw_y, x, y);
-    let mut ts = state.touch.borrow_mut();
+    let mut ts = state.interaction.touch.borrow_mut();
     let now = Instant::now();
     ts.active = true;
     ts.start_time = Some(now);
@@ -72,9 +74,9 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
     ts.is_drag = false;
     ts.long_press_fired = false;
 
-    let mut s = state.swiper.borrow_mut();
+    let mut s = state.interaction.swiper.borrow_mut();
     ts.start_offset_x = s.offset_x;
-    ts.start_offset_y = state.track_physics.borrow().offset_y;
+    ts.start_offset_y = state.interaction.track_physics.borrow().offset_y;
 
     if s.is_moving && s.velocity.abs() > 100.0 {
         s.velocity *= 0.3; // "Catch" effect from Python
@@ -90,9 +92,9 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
     if y < 90.0 && current_screen == ScreenState::Selector {
         ts.is_alphabet = true;
         let target_char = resolve_alphabet_char(x);
-        let calib_f = ((x - (SCREEN_WIDTH as f32 * 0.08))
-            / (SCREEN_WIDTH as f32 * (0.85 - 0.08)))
-            .clamp(0.0, 1.0);
+        let margin = 40.0;
+        let width = 1200.0;
+        let calib_f = ((x - margin) / width).clamp(0.0, 1.0);
         log::info!(
             "ALPHABET TOUCH (DOWN): '{}' (x={:.1}, f={:.2})",
             target_char,
@@ -101,7 +103,7 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
         );
 
         // Trigger instant jump on Down
-        if let (Ok(mut w), Ok(albs)) = (state.warp.try_borrow_mut(), state.albums.try_borrow()) {
+        if let (Ok(mut w), Ok(albs)) = (state.interaction.warp.try_borrow_mut(), state.library.albums.try_borrow()) {
             warp::trigger_warp_jump(&mut w, &albs, s.lib_offset, target_char, "DOWN");
         }
     } else if y < CORNER_TOUCH_SIZE {
@@ -130,9 +132,9 @@ fn handle_touch_move(
     raw_x: f32,
     raw_y: f32,
 ) {
-    *state.last_interaction.borrow_mut() = Instant::now();
+    *state.interaction.last_interaction.borrow_mut() = Instant::now();
     let now = Instant::now();
-    let mut ts = state.touch.borrow_mut();
+    let mut ts = state.interaction.touch.borrow_mut();
     if !ts.active {
         return;
     }
@@ -150,8 +152,8 @@ fn handle_touch_move(
         let target_char = resolve_alphabet_char(x);
 
         // --- Lógica de Salto (Warp) ---
-        if let (Ok(mut w), Ok(albs)) = (state.warp.try_borrow_mut(), state.albums.try_borrow()) {
-            let lib_offset = state.swiper.borrow().lib_offset;
+        if let (Ok(mut w), Ok(albs)) = (state.interaction.warp.try_borrow_mut(), state.library.albums.try_borrow()) {
+            let lib_offset = state.interaction.swiper.borrow().lib_offset;
             warp::trigger_warp_jump(&mut w, &albs, lib_offset, target_char, "MOVE");
         }
     } else if ts.is_drag {
@@ -161,7 +163,7 @@ fn handle_touch_move(
                 let dx = x - ts.last_x;
                 let dt = ts.last_time.elapsed().as_secs_f32();
 
-                let mut s = state.swiper.borrow_mut();
+                let mut s = state.interaction.swiper.borrow_mut();
                 s.is_moving = true;
                 s.offset_x += dx;
 
@@ -174,7 +176,7 @@ fn handle_touch_move(
                 let dy = y - ts.last_y;
                 let dt = ts.last_time.elapsed().as_secs_f32();
 
-                let mut tp = state.track_physics.borrow_mut();
+                let mut tp = state.interaction.track_physics.borrow_mut();
                 tp.is_moving = true;
                 tp.offset_y += dy;
 
@@ -192,10 +194,10 @@ fn handle_touch_move(
 }
 
 fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f32, raw_y: f32) {
-    *state.last_interaction.borrow_mut() = Instant::now();
+    *state.interaction.last_interaction.borrow_mut() = Instant::now();
 
     let (drag, duration, fired, start_x, start_y, start_off_x, x, y, _is_alphabet) = {
-        let mut ts = state.touch.borrow_mut();
+        let mut ts = state.interaction.touch.borrow_mut();
         if !ts.active {
             return;
         }
@@ -216,7 +218,7 @@ fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f3
         )
     };
     {
-        let mut ts = state.touch.borrow_mut();
+        let mut ts = state.interaction.touch.borrow_mut();
         ts.is_alphabet = false;
     }
 
@@ -227,142 +229,12 @@ fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f3
         let screen = u.get_current_screen();
 
         if screen == ScreenState::Selector {
-            let (s_offset_x, s_spacing) = {
-                let Ok(s) = state.swiper.try_borrow() else {
-                    return;
-                };
-                (s.offset_x, s.spacing)
-            };
-            let offset_diff = (s_offset_x - start_off_x).abs();
-
-            if !drag && !fired && offset_diff < TAP_OFFSET_THRESHOLD {
-                // TAP!
-                let cx = CENTER_X;
-                let slot = ((x - (cx + s_offset_x)) / s_spacing).round() as i32;
-
-                if y >= ALBUM_TAP_Y_MIN
-                    && y <= ALBUM_TAP_Y_MAX
-                    && duration < TAP_MAX_DURATION_MS
-                {
-                    if slot == 0 {
-                        // Reproducción del elemento CENTRAL
-                        let mode = *state.current_mode.borrow();
-                        let target_idx = state.swiper.borrow().lib_offset + 3;
-                        let api = state.api_url.clone();
-
-                        if let Some(item_data) = state.model.row_data(3) {
-                            log::info!("Player: Navigation to Center Item ({:?})", mode);
-                            u.set_album_title(item_data.title.clone());
-                            u.set_album_artist(item_data.artist.clone());
-                            u.set_bg_cover(item_data.cover.clone());
-                            u.set_current_screen(ScreenState::Player);
-                            u.set_is_playing(true);
-                        }
-
-                        if mode == api::BrowserMode::Albums {
-                            let albums = state.albums.borrow().clone();
-                            if target_idx >= 0 && (target_idx as usize) < albums.len() {
-                                if let Some(tracks) = &albums[target_idx as usize].tracks {
-                                    let track_ids: Vec<String> = tracks.iter().map(|t| t.track_id.clone()).collect();
-                                    std::thread::spawn(move || {
-                                        let _ = api::send_queue(&api, track_ids);
-                                        let _ = api::send_player_command_get(&api, "play");
-                                    });
-                                }
-                            }
-                        } else {
-                            let playlists = state.playlists.borrow().clone();
-                            if target_idx >= 0 && (target_idx as usize) < playlists.len() {
-                                if let Some(id) = playlists[target_idx as usize].id.clone() {
-                                    std::thread::spawn(move || {
-                                        if let Ok(track_ids) = api::fetch_playlist_tracks(&api, &id) {
-                                            let _ = api::send_queue(&api, track_ids);
-                                            let _ = api::send_player_command_get(&api, "play");
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                    } else {
-                        log::info!(
-                            "Interaccion: TAP Portada Lateral ({}) -> Snapping",
-                            slot
-                        );
-                        if let Ok(mut mut_s) = state.swiper.try_borrow_mut() {
-                            let target_snap = slot as f32 * s_spacing;
-                            mut_s.snap_target = mut_s.offset_x + target_snap;
-                            mut_s.is_moving = true;
-                            mut_s.velocity = 0.0;
-                        }
-                    }
-                }
-            } else if drag {
-                if let Ok(mut s) = state.swiper.try_borrow_mut() {
-                    let vel = s.velocity;
-                    let off = s.offset_x;
-                    s.set_snap_slot(off, vel);
-                }
-            }
+            let start_off_x = start_off_x;
+            screens::selector::handle_touch_up(state, &u, x, y, dx, dy, drag, fired, start_off_x);
         } else if screen == ScreenState::Player {
-            if !drag && !fired {
-                // --- GESTIÓN MANUAL DEL TOUCH EN PLAYER ---
-                if (y - PLAYER_CONTROLS_Y).abs() < BUTTON_HIT_RADIUS {
-                    if (x - PLAYER_PREV_X).abs() < BUTTON_HIT_RADIUS {
-                        log::info!("Player Touch: PREV");
-                        u.invoke_play_prev();
-                    } else if (x - PLAYER_PLAY_X).abs() < BUTTON_HIT_RADIUS {
-                        log::info!("Player Touch: PLAY/PAUSE");
-                        u.invoke_toggle_pause();
-                    } else if (x - PLAYER_NEXT_X).abs() < BUTTON_HIT_RADIUS {
-                        log::info!("Player Touch: NEXT");
-                        u.invoke_play_next();
-                    }
-                } else if (y - PLAYER_OPTIONS_Y).abs() < BUTTON_HIT_RADIUS {
-                    if (x - PLAYER_SHUFFLE_X).abs() < BUTTON_HIT_RADIUS {
-                        log::info!("Player Touch: SHUFFLE");
-                        u.invoke_toggle_shuffle();
-                    } else if (x - PLAYER_REPEAT_X).abs() < BUTTON_HIT_RADIUS {
-                        log::info!("Player Touch: REPEAT");
-                        u.invoke_toggle_repeat();
-                    }
-                }
-            }
-
-            if dx < EXIT_SWIPE_THRESHOLD {
-                log::info!("Interaccion: SWIPE LEFT -> Salir Reproductor");
-                go_to_selector(&u);
-            }
+            screens::player::handle_touch_up(state, &u, x, y, dx, dy, drag, fired);
         } else if screen == ScreenState::TrackPicker {
-            // Botón Cerrar (X)
-            if x > TRACK_CLOSE_X_MIN && y < TRACK_CLOSE_Y_MAX {
-                log::info!("TrackPicker: Cerrar");
-                go_to_selector(&u);
-                return;
-            }
-
-            if !drag && !fired {
-                // Click en canción
-                let y_in_list = y - TRACK_LIST_Y_START;
-                let scroll_off = state.track_physics.borrow().offset_y;
-                let item_idx = ((y_in_list - scroll_off) / TRACK_ITEM_HEIGHT).floor() as i32;
-
-                if item_idx >= 0 && y > TRACK_LIST_Y_START && y < TRACK_LIST_Y_END {
-                    let ids = state.track_ids.borrow();
-                    if item_idx < ids.len() as i32 {
-                        let tid = ids[item_idx as usize].clone();
-                        log::info!("TrackPicker: Pista {} pulsada (id={})", item_idx, tid);
-                        u.invoke_track_clicked(tid.into());
-                    }
-                }
-            }
-        }
-
-        if screen == ScreenState::Selector
-            && dy > MODE_SWIPE_DY_MIN
-            && dx.abs() < MODE_SWIPE_DX_MAX
-        {
-            log::info!("Interaccion: SWIPE DOWN -> Toggle Browser Mode");
-            u.invoke_toggle_browser_mode();
+            screens::track_picker::handle_touch_up(state, &u, x, y, dx, dy, drag, fired);
         }
     }
 }
@@ -374,7 +246,7 @@ pub fn check_long_press(
     ui_weak: &slint::Weak<AppWindow>,
     now: Instant,
 ) -> bool {
-    let Ok(mut ts) = state.touch.try_borrow_mut() else {
+    let Ok(mut ts) = state.interaction.touch.try_borrow_mut() else {
         return false;
     };
     if let Some(start) = ts.start_time {
@@ -386,8 +258,8 @@ pub fn check_long_press(
             ts.long_press_fired = true;
             if let Some(ui) = ui_weak.upgrade() {
                 // Al hacer pulsación larga, abrimos el selector de canciones del disco centrado
-                let s = state.swiper.borrow();
-                let albums = state.albums.borrow();
+                let s = state.interaction.swiper.borrow();
+                let albums = state.library.albums.borrow();
                 let target_idx = s.lib_offset + 3; // El centro
 
                 if target_idx >= 0 && (target_idx as usize) < albums.len() {
@@ -396,13 +268,13 @@ pub fn check_long_press(
 
                     if let Some(tracks) = &album.tracks {
                         {
-                            let mut ids = state.track_ids.borrow_mut();
+                            let mut ids = state.library.track_ids.borrow_mut();
                             ids.clear();
                             for t in tracks {
                                 ids.push(t.track_id.clone());
                             }
 
-                            let mut tp = state.track_physics.borrow_mut();
+                            let mut tp = state.interaction.track_physics.borrow_mut();
                             tp.offset_y = 0.0;
                             tp.velocity = 0.0;
                             let total_h = (tracks.len() as f32) * TRACK_ITEM_HEIGHT;

@@ -11,7 +11,7 @@ use std::time::Instant;
 use slint::{ComponentHandle, Model};
 
 use crate::api;
-use crate::app_state::AppState;
+use crate::app::state::AppState;
 use crate::config::{CENTER_INDEX, VISIBLE_SLOTS};
 use crate::ui_utils::{get_item_slint, go_to_selector};
 use crate::{AppWindow, BrowserMode, ScreenState};
@@ -65,7 +65,7 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
         let state = state.clone();
         ui.on_toggle_browser_mode(move || {
             let new_mode = {
-                let mut mode = state.current_mode.borrow_mut();
+                let mut mode = state.library.current_mode.borrow_mut();
                 if *mode == api::BrowserMode::Albums {
                     *mode = api::BrowserMode::Playlists;
                 } else {
@@ -86,19 +86,19 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                 });
 
                 let lib_off = {
-                    let mut s = state.swiper.borrow_mut();
+                    let mut s = state.interaction.swiper.borrow_mut();
 
                     // PERSISTENCIA: Guardamos posición actual y recuperamos la del nuevo modo
                     if new_mode == api::BrowserMode::Playlists {
                         // Veníamos de Albums -> Guardamos en albums_pos
-                        *state.albums_pos.borrow_mut() = (s.offset_x, s.lib_offset);
-                        let (off, loff) = *state.playlists_pos.borrow();
+                        *state.interaction.albums_pos.borrow_mut() = (s.offset_x, s.lib_offset);
+                        let (off, loff) = *state.interaction.playlists_pos.borrow();
                         s.offset_x = off;
                         s.lib_offset = loff;
                     } else {
                         // Veníamos de Playlists -> Guardamos en playlists_pos
-                        *state.playlists_pos.borrow_mut() = (s.offset_x, s.lib_offset);
-                        let (off, loff) = *state.albums_pos.borrow();
+                        *state.interaction.playlists_pos.borrow_mut() = (s.offset_x, s.lib_offset);
+                        let (off, loff) = *state.interaction.albums_pos.borrow();
                         s.offset_x = off;
                         s.lib_offset = loff;
                     }
@@ -108,24 +108,24 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                     s.lib_offset
                 };
 
-                let mut img_s = state.image_state.borrow_mut();
-                let albums = state.albums.borrow();
-                let playlists = state.playlists.borrow();
+                let mut img_s = state.library.image_state.borrow_mut();
+                let albums = state.library.albums.borrow();
+                let playlists = state.library.playlists.borrow();
                 for i in 0..VISIBLE_SLOTS {
-                    state.model.set_row_data(
+                    state.library.model.set_row_data(
                         i as usize,
                         get_item_slint(
                             &new_mode,
                             &albums,
                             &playlists,
                             &mut img_s,
-                            &state.img_tx,
+                            &state.library.img_tx,
                             lib_off + i,
                         ),
                     );
                 }
 
-                if let Some(item_data) = state.model.row_data(CENTER_INDEX as usize) {
+                if let Some(item_data) = state.library.model.row_data(CENTER_INDEX as usize) {
                     ui.set_bg_cover(item_data.cover.clone());
                 }
 
@@ -135,7 +135,7 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                     &albums,
                     &playlists,
                     &mut img_s,
-                    &state.img_tx,
+                    &state.library.img_tx,
                     lib_off,
                 );
             }
@@ -148,7 +148,7 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
         let state = state.clone();
         ui.on_album_clicked(move |visual_idx| {
             if let Some(ui) = ui_weak.upgrade() {
-                if let Some(item_data) = state.model.row_data(visual_idx as usize) {
+                if let Some(item_data) = state.library.model.row_data(visual_idx as usize) {
                     log::info!("Navigation: Go to Player (Click visual_idx={})", visual_idx);
                     ui.set_album_title(item_data.title.clone());
                     ui.set_album_artist(item_data.artist.clone());
@@ -156,23 +156,25 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                     ui.set_current_screen(ScreenState::Player);
 
                     // Trigger playback
-                    let albums = state.albums.borrow().clone();
-                    let playlists = state.playlists.borrow().clone();
-                    let s = state.swiper.borrow();
-                    let mode = *state.current_mode.borrow();
+                    let albums = state.library.albums.borrow().clone();
+                    let playlists = state.library.playlists.borrow().clone();
+                    let s = state.interaction.swiper.borrow();
+                    let mode = *state.library.current_mode.borrow();
                     let target_idx = s.lib_offset + visual_idx as i32;
                     let api = state.api_url.clone();
 
+                    let is_paused = *state.playback.playback_state.borrow() == "pause";
                     ui.set_is_playing(true);
-                    *state.playback_state.borrow_mut() = "play".to_string();
-
+                    *state.playback.playback_state.borrow_mut() = "play".to_string();
                     if mode == api::BrowserMode::Albums {
                         if target_idx >= 0 && (target_idx as usize) < albums.len() {
                             if let Some(tracks) = &albums[target_idx as usize].tracks {
                                 let track_ids: Vec<String> = tracks.iter().map(|t| t.track_id.clone()).collect();
                                 std::thread::spawn(move || {
                                     let _ = api::send_queue(&api, track_ids);
-                                    let _ = api::send_player_command_get(&api, "play");
+                                    if is_paused {
+                                        let _ = api::send_player_command_get(&api, "pause");
+                                    }
                                 });
                             }
                         }
@@ -183,7 +185,9 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                                 std::thread::spawn(move || {
                                     if let Ok(track_ids) = api::fetch_playlist_tracks(&api, &id) {
                                         let _ = api::send_queue(&api, track_ids);
-                                        let _ = api::send_player_command_get(&api, "play");
+                                        if is_paused {
+                                            let _ = api::send_player_command_get(&api, "pause");
+                                        }
                                     }
                                 });
                             }
@@ -231,10 +235,10 @@ fn register_player_actions(ui: &AppWindow, state: &AppState) {
         let state = state.clone();
         ui.on_toggle_shuffle(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                let mut opt = state.opt_shuffle.borrow_mut();
+                let mut opt = state.playback.opt_shuffle.borrow_mut();
                 *opt = !*opt;
                 ui.set_shuffle_on(*opt);
-                *state.opt_lock.borrow_mut() = Instant::now();
+                *state.playback.opt_lock.borrow_mut() = Instant::now();
 
                 let api = state.api_url.clone();
                 std::thread::spawn(move || {
@@ -248,10 +252,10 @@ fn register_player_actions(ui: &AppWindow, state: &AppState) {
         let state = state.clone();
         ui.on_toggle_repeat(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                let mut opt = state.opt_repeat.borrow_mut();
+                let mut opt = state.playback.opt_repeat.borrow_mut();
                 *opt = !*opt;
                 ui.set_repeat_on(*opt);
-                *state.opt_lock.borrow_mut() = Instant::now();
+                *state.playback.opt_lock.borrow_mut() = Instant::now();
 
                 let api = state.api_url.clone();
                 std::thread::spawn(move || {

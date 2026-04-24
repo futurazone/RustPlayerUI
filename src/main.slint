@@ -16,7 +16,7 @@ export struct TrackData {
     track_number: int,
 }
 
-enum ScreenState { selector, player, track_picker, calibration }
+enum ScreenState { splash, selector, player, track_picker, calibration }
 enum BrowserMode { albums, playlists }
 
 component AlbumItem inherits Rectangle {
@@ -87,8 +87,10 @@ export component AppWindow inherits Window {
     in property <int> center_index: 3;
     in property <length> swiper_offset: 0;
     in property <image> bg_cover;
+    in property <image> player_cover;
+    in property <image> splash_image;
     
-    in-out property <ScreenState> current_screen: ScreenState.selector;
+    in-out property <ScreenState> current_screen: ScreenState.splash;
     in-out property <BrowserMode> browser_mode: BrowserMode.albums;
     in-out property <float> vertical_scaling: 0.90; // Corrección para estiramiento en Pi (720/800)
 
@@ -283,7 +285,7 @@ export component AppWindow inherits Window {
                         background: #111;
                         border-radius: 24px;
                         clip: true;
-                        Image { source: root.bg_cover; width: 100%; height: 100%; image-fit: fill; }
+                        Image { source: root.player_cover; width: 100%; height: 100%; image-fit: fill; }
                     }
 
                     HorizontalLayout {
@@ -551,6 +553,24 @@ export component AppWindow inherits Window {
         }
         moved => {
             global_touch_move(self.mouse-x, self.mouse-y);
+        }
+    }
+
+    // --- PANTALLA SPLASH ---
+    splash_screen := Rectangle {
+        width: 100%;
+        height: 100%;
+        opacity: current_screen == ScreenState.splash ? 1 : 0;
+        visible: self.opacity > 0;
+        animate opacity { duration: 300ms; }
+        
+        background: #000;
+        
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.splash_image;
+            image-fit: cover;
         }
     }
 }

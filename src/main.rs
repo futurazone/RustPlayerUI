@@ -11,12 +11,14 @@
 //! El timer tick (~60fps) coordina: long press → status → warp → watchdog →
 //! biblioteca → imágenes async → progress → física vertical → swiper + reciclaje.
 
+mod app;
 mod api;
-mod app_state;
 mod callbacks;
 mod config;
 mod physics;
 mod player_sync;
+mod screens;
+mod services;
 mod touch;
 mod touch_handlers;
 mod ui_utils;
@@ -30,7 +32,8 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::app_state::AppState;
+use crate::app::Application;
+use crate::app::state::AppState;
 use crate::config::*;
 use crate::ui_utils::*;
 use crate::warp::WarpState;
@@ -43,65 +46,26 @@ fn load_icons(ui: &AppWindow) {
     ui.set_icon_shuffle(Image::load_from_path("assets/shuffle.svg".as_ref()).unwrap_or_default());
     ui.set_icon_repeat(Image::load_from_path("assets/repeat.svg".as_ref()).unwrap_or_default());
     ui.set_icon_library(Image::load_from_path("assets/library.svg".as_ref()).unwrap_or_default());
+    
+    // Cargar splash desde la ruta del backend
+    ui.set_splash_image(Image::load_from_path("../backend/splash_design.png".as_ref()).unwrap_or_default());
 }
 
-fn spawn_background_threads(
-    api_url: &str,
-) -> (
-    mpsc::Receiver<(Vec<api::Album>, Vec<api::Playlist>)>,
-    mpsc::Receiver<api::PlayerStatus>,
-) {
-    let (lib_tx, lib_rx) = mpsc::channel();
-    let (status_tx, status_rx) = mpsc::channel();
 
-    // Hilo de carga de biblioteca
-    {
-        let api_url = api_url.to_string();
-        std::thread::spawn(move || {
-            let albums = api::fetch_real_albums(&api_url).unwrap_or_default();
-            let playlists = api::fetch_real_playlists(&api_url).unwrap_or_default();
-            let _ = lib_tx.send((albums, playlists));
-        });
-    }
-
-    // Hilo de status polling (cada 1s)
-    {
-        let api_url = api_url.to_string();
-        std::thread::spawn(move || loop {
-            if let Ok(status) = api::get_real_status(&api_url) {
-                let _ = status_tx.send(status);
-            }
-            std::thread::sleep(Duration::from_secs(1));
-        });
-    }
-
-    (lib_rx, status_rx)
-}
 
 fn main() -> Result<(), slint::PlatformError> {
     env_logger::init();
     log::info!("Starting Pi Player Rust UI...");
-    let ui = AppWindow::new()?;
 
-    let api_url = std::env::var("API_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+    // Inicialización de la aplicación y estado centralizado
+    let (app, img_rx) = Application::init()?;
+    let ui = app.ui;
+    let state = app.state;
 
-    // Iconos y estado inicial
     load_icons(&ui);
-    go_to_selector(&ui);
-
-    // Estado centralizado
-    let (state, img_rx) = AppState::new(api_url.clone());
-
-    // Inicializar UI con modelo
-    ui.set_visible_items(state.model.clone().into());
-    let x_pos: Vec<f32> = (-CENTER_INDEX..=CENTER_INDEX)
-        .map(|i: i32| CENTER_X + (i as f32) * state.swiper.borrow().spacing)
-        .collect();
-    ui.set_x_positions(Rc::new(VecModel::from(x_pos)).into());
-    ui.set_center_index(CENTER_INDEX);
 
     // Hilos de background
-    let (lib_rx, status_rx) = spawn_background_threads(&api_url);
+    let services::ServiceChannels { lib_rx, status_rx } = services::spawn_all_services(&state.api_url);
 
     // Registrar handlers
     touch_handlers::register_touch_handlers(&ui, &state);
@@ -112,7 +76,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let ui_weak = ui.as_weak();
     let state = state.clone();
 
+    let app_start_time = Instant::now();
     let timer = slint::Timer::default();
+    let mut splash_done = false;
+    let mut backend_ready_time: Option<Instant> = None;
+
     timer.start(
         slint::TimerMode::Repeated,
         Duration::from_millis(16),
@@ -129,6 +97,34 @@ fn main() -> Result<(), slint::PlatformError> {
                 dt
             };
 
+            // 0. Control del SplashScreen (Startup Security Delay)
+            if !splash_done {
+                let has_data = !state.library.albums.borrow().is_empty();
+                if has_data {
+                    if backend_ready_time.is_none() {
+                        backend_ready_time = Some(now);
+                    }
+                    if let Some(ready_t) = backend_ready_time {
+                        let backend_safe = now.duration_since(ready_t).as_secs_f32() > 0.5;
+                        let min_time_passed = now.duration_since(app_start_time).as_secs_f32() > 1.0;
+
+                        if backend_safe && min_time_passed {
+                            splash_done = true;
+                            if let Some(ui) = ui_weak.upgrade() {
+                                let is_playing = *state.playback.playback_state.borrow() == "play";
+                                if is_playing {
+                                    log::info!("STARTUP: Música detectada, saltando a Player");
+                                    ui.set_current_screen(crate::ScreenState::Player);
+                                } else {
+                                    log::info!("STARTUP: Listo, saltando a Selector");
+                                    ui.set_current_screen(crate::ScreenState::Selector);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 1. Comprobación de Long-Press (TouchState)
             if !touch_handlers::check_long_press(&state, &ui_weak, now) {
                 return;
@@ -143,14 +139,14 @@ fn main() -> Result<(), slint::PlatformError> {
 
             // 3. Gestión de Warp State Machine
             let mut recycled_from_warp = false;
-            if let Ok(mut ws) = state.warp.try_borrow_mut() {
+            if let Ok(mut ws) = state.interaction.warp.try_borrow_mut() {
                 if let Some(ui) = ui_weak.upgrade() {
                     match warp::process_warp_tick(&mut ws, &ui) {
                         warp::WarpTickResult::ExitingComplete {
                             target_idx,
                             direction,
                         } => {
-                            if let Ok(mut s) = state.swiper.try_borrow_mut() {
+                            if let Ok(mut s) = state.interaction.swiper.try_borrow_mut() {
                                 s.lib_offset = target_idx - CENTER_INDEX;
                                 s.offset_x = 0.0;
                                 s.snap_target = 0.0;
@@ -178,47 +174,47 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Ok((new_albums, new_playlists)) = lib_rx.try_recv() {
                 log::info!("API: Real data received, updating UI models...");
                 
-                *state.albums.borrow_mut() = new_albums;
-                *state.playlists.borrow_mut() = new_playlists;
+                *state.library.albums.borrow_mut() = new_albums;
+                *state.library.playlists.borrow_mut() = new_playlists;
                 
                 // Trigger windowed pre-loading
                 if let (Ok(mut img_s), Ok(mode)) = (
-                    state.image_state.try_borrow_mut(),
-                    state.current_mode.try_borrow(),
+                    state.library.image_state.try_borrow_mut(),
+                    state.library.current_mode.try_borrow(),
                 ) {
-                    let s = state.swiper.borrow();
+                    let s = state.interaction.swiper.borrow();
                     ui_utils::preload_neighborhood(
                         &mode,
-                        &state.albums.borrow(),
-                        &state.playlists.borrow(),
+                        &state.library.albums.borrow(),
+                        &state.library.playlists.borrow(),
                         &mut img_s,
-                        &state.img_tx,
+                        &state.library.img_tx,
                         s.lib_offset,
                     );
                 }
 
                 if let Some(ui) = ui_weak.upgrade() {
                     if let (Ok(mut img_s), Ok(mode)) = (
-                        state.image_state.try_borrow_mut(),
-                        state.current_mode.try_borrow(),
+                        state.library.image_state.try_borrow_mut(),
+                        state.library.current_mode.try_borrow(),
                     ) {
-                        let s = state.swiper.borrow();
-                        let albums = state.albums.borrow();
-                        let playlists = state.playlists.borrow();
+                        let s = state.interaction.swiper.borrow();
+                        let albums = state.library.albums.borrow();
+                        let playlists = state.library.playlists.borrow();
                         for i in 0..VISIBLE_SLOTS {
-                            state.model.set_row_data(
+                            state.library.model.set_row_data(
                                 i as usize,
                                 get_item_slint(
                                     &mode,
                                     &albums,
                                     &playlists,
                                     &mut img_s,
-                                    &state.img_tx,
+                                    &state.library.img_tx,
                                     s.lib_offset + i,
                                 ),
                             );
                         }
-                        if let Some(item_data) = state.model.row_data(CENTER_INDEX as usize) {
+                        if let Some(item_data) = state.library.model.row_data(CENTER_INDEX as usize) {
                             ui.set_bg_cover(item_data.cover.clone());
                         }
                     }
@@ -228,13 +224,35 @@ fn main() -> Result<(), slint::PlatformError> {
             // 6. Procesamiento de imágenes asíncronas (limitado a 2 por frame para fluidez, como en Python)
             let mut loaded_any = false;
             let mut uploaded_count = 0;
+            let mut player_cover_update: Option<Image> = None;
+
             while let Ok((path, width, height, pixels)) = img_rx.try_recv() {
                 log::info!("Image: Received loaded pixels for {}", path);
                 let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
                     &pixels, width, height,
                 );
                 let img = slint::Image::from_rgba8(buffer);
-                if let Ok(mut img_s) = state.image_state.try_borrow_mut() {
+                
+                // Check if this is the player cover before moving img
+                let current_track = state.playback.last_track_id.borrow();
+                if let Some(track_id) = current_track.as_ref() {
+                    let albums = state.library.albums.borrow();
+                    for album in albums.iter() {
+                        if let Some(tracks) = &album.tracks {
+                            for track in tracks {
+                                if &track.track_id == track_id {
+                                    if let Some(cp) = album.cover_thumb.as_ref().or(album.cover.as_ref()) {
+                                        if cp == &path {
+                                            player_cover_update = Some(img.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Ok(mut img_s) = state.library.image_state.try_borrow_mut() {
                     img_s.cache.insert(path.clone(), img);
                     img_s.loading.remove(&path);
                 }
@@ -244,16 +262,23 @@ fn main() -> Result<(), slint::PlatformError> {
                     break;
                 }
             }
+
+            // Apply player cover update after all borrows are done
+            if let Some(player_cover) = player_cover_update {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_player_cover(player_cover);
+                }
+            }
             
             // Cleanup de caché una vez por tick si se cargaron imágenes
             if loaded_any {
-                if let (Ok(mut img_s), Ok(mode)) = (state.image_state.try_borrow_mut(), state.current_mode.try_borrow()) {
+                if let (Ok(mut img_s), Ok(mode)) = (state.library.image_state.try_borrow_mut(), state.library.current_mode.try_borrow()) {
                     ui_utils::cleanup_cache(
                         &mut img_s, 
-                        state.swiper.borrow().lib_offset,
+                        state.interaction.swiper.borrow().lib_offset,
                         &mode,
-                        &state.albums.borrow(),
-                        &state.playlists.borrow()
+                        &state.library.albums.borrow(),
+                        &state.library.playlists.borrow()
                     );
                 }
             }
@@ -264,7 +289,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
 
             // 8. Física Vertical (TrackPicker)
-            let tp_updated = if let Ok(mut tp) = state.track_physics.try_borrow_mut() {
+            let tp_updated = if let Ok(mut tp) = state.interaction.track_physics.try_borrow_mut() {
                 tp.update(dt)
             } else {
                 false
@@ -272,16 +297,31 @@ fn main() -> Result<(), slint::PlatformError> {
 
             if tp_updated {
                 if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_track_list_offset(state.track_physics.borrow().offset_y.into());
+                    ui.set_track_list_offset(state.interaction.track_physics.borrow().offset_y.into());
+                }
+            }
+
+            // DEFERRED BG UPDATE: Ejecutar aquí para que funcione aunque el swiper esté parado
+            // (el early return de abajo salta el Paso 11 si no hay movimiento)
+            if let (Ok(mut bg_idx), Ok(bg_time)) = (state.library.last_bg_target_idx.try_borrow_mut(), state.library.last_bg_update_time.try_borrow()) {
+                if *bg_idx != -1 && now.duration_since(*bg_time).as_millis() > 150 {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        if let Some(item_data) = state.library.model.row_data(*bg_idx as usize) {
+                            if item_data.cover.size().width > 0 {
+                                ui.set_bg_cover(item_data.cover.clone());
+                                *bg_idx = -1; // Consumido
+                            }
+                        }
+                    }
                 }
             }
 
             // 9. Update de Física y Reciclaje del Swiper
             let update_result = {
-                let Ok(mut s) = state.swiper.try_borrow_mut() else {
+                let Ok(mut s) = state.interaction.swiper.try_borrow_mut() else {
                     return;
                 };
-                let Ok(ts) = state.touch.try_borrow() else {
+                let Ok(ts) = state.interaction.touch.try_borrow() else {
                     return;
                 };
 
@@ -340,11 +380,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
                     if recycled {
                         if let (Ok(mut img_s), Ok(mode)) = (
-                            state.image_state.try_borrow_mut(),
-                            state.current_mode.try_borrow(),
+                            state.library.image_state.try_borrow_mut(),
+                            state.library.current_mode.try_borrow(),
                         ) {
-                            let albums = state.albums.borrow();
-                            let playlists = state.playlists.borrow();
+                            let albums = state.library.albums.borrow();
+                            let playlists = state.library.playlists.borrow();
 
                             // OPTIMIZACIÓN: Solo recargamos todo si hubo un warp, un cambio de modo 
                             // o si alguna imagen terminó de cargar (para que se vea en su slot).
@@ -353,31 +393,31 @@ fn main() -> Result<(), slint::PlatformError> {
                                 // Desplazamiento a la derecha (lib_offset aumenta): 
                                 // Corremos todos los items una posición a la izquierda y cargamos el nuevo a la derecha.
                                 for i in 0..(VISIBLE_SLOTS - 1) {
-                                    if let Some(d) = state.model.row_data((i + 1) as usize) {
-                                        state.model.set_row_data(i as usize, d);
+                                    if let Some(d) = state.library.model.row_data((i + 1) as usize) {
+                                        state.library.model.set_row_data(i as usize, d);
                                     }
                                 }
-                                state.model.set_row_data((VISIBLE_SLOTS - 1) as usize, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.img_tx, lib_offset + VISIBLE_SLOTS - 1));
+                                state.library.model.set_row_data((VISIBLE_SLOTS - 1) as usize, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.library.img_tx, lib_offset + VISIBLE_SLOTS - 1));
                             } else if !loaded_any && !recycled_from_warp && lib_delta == -1 {
                                 // Desplazamiento a la izquierda (lib_offset disminuye):
                                 // Corremos todos los items una posición a la derecha y cargamos el nuevo a la izquierda.
                                 for i in (1..VISIBLE_SLOTS).rev() {
-                                    if let Some(d) = state.model.row_data((i - 1) as usize) {
-                                        state.model.set_row_data(i as usize, d);
+                                    if let Some(d) = state.library.model.row_data((i - 1) as usize) {
+                                        state.library.model.set_row_data(i as usize, d);
                                     }
                                 }
-                                state.model.set_row_data(0, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.img_tx, lib_offset));
+                                state.library.model.set_row_data(0, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.library.img_tx, lib_offset));
                             } else {
                                 // Caso general: recarga completa (Warp, cambio de modo brusco o imagen cargada)
                                 for i in 0..VISIBLE_SLOTS {
-                                    state.model.set_row_data(
+                                    state.library.model.set_row_data(
                                         i as usize,
                                         get_item_slint(
                                             &mode,
                                             &albums,
                                             &playlists,
                                             &mut img_s,
-                                            &state.img_tx,
+                                            &state.library.img_tx,
                                             lib_offset + i,
                                         ),
                                     );
@@ -392,7 +432,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                     &albums,
                                     &playlists,
                                     &mut img_s,
-                                    &state.img_tx,
+                                    &state.library.img_tx,
                                     lib_offset,
                                 );
                             }
@@ -401,7 +441,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
                     // Fondo: Solicitamos actualización diferida (Lazy Background como en Python)
                     if center_changed || recycled {
-                        if let (Ok(mut bg_idx), Ok(mut bg_time)) = (state.last_bg_target_idx.try_borrow_mut(), state.last_bg_update_time.try_borrow_mut()) {
+                        if let (Ok(mut bg_idx), Ok(mut bg_time)) = (state.library.last_bg_target_idx.try_borrow_mut(), state.library.last_bg_update_time.try_borrow_mut()) {
                             *bg_idx = visual_center as i32;
                             *bg_time = now;
                         }
@@ -409,19 +449,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            // 11. Ejecución diferida del fondo (150ms de margen para fluidez)
-            if let (Ok(mut bg_idx), Ok(bg_time)) = (state.last_bg_target_idx.try_borrow_mut(), state.last_bg_update_time.try_borrow()) {
-                if *bg_idx != -1 && now.duration_since(*bg_time).as_millis() > 150 {
-                    if let Some(ui) = ui_weak.upgrade() {
-                        if let Some(item_data) = state.model.row_data(*bg_idx as usize) {
-                            if item_data.cover.size().width > 0 {
-                                ui.set_bg_cover(item_data.cover.clone());
-                                *bg_idx = -1; // Consumido
-                            }
-                        }
-                    }
-                }
-            }
+            // 11. (El fondo diferido ahora se ejecuta antes del early return del Paso 9)
         },
     );
 

@@ -33,7 +33,7 @@ pub trait SlintItemConverter {
     ) -> AlbumData;
 }
 
-fn spawn_image_loader(path: String, tx: mpsc::Sender<(String, u32, u32, Vec<u8>)>) {
+pub fn spawn_image_loader(path: String, tx: mpsc::Sender<(String, u32, u32, Vec<u8>)>) {
     let p_clone = path.clone();
     std::thread::spawn(move || {
         log::debug!("Image: Loading from disk: {}", p_clone);

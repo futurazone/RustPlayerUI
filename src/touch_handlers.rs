@@ -84,10 +84,12 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
         s.velocity = 0.0;
     }
 
-    let current_screen = ui_weak
+    let (current_screen, shutdown_visible) = ui_weak
         .upgrade()
-        .map(|u| u.get_current_screen())
-        .unwrap_or(ScreenState::Selector);
+        .map(|u| (u.get_current_screen(), u.get_shutdown_visible()))
+        .unwrap_or((ScreenState::Selector, false));
+    
+    ts.shutdown_was_visible = shutdown_visible;
 
     if y < 90.0 && current_screen == ScreenState::Selector {
         ts.is_alphabet = true;
@@ -117,6 +119,12 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
             log::info!("CORNER TOUCH: BOTTOM-LEFT ({:.1}, {:.1})", x, y);
         } else if x > (SCREEN_WIDTH - CORNER_TOUCH_SIZE) {
             log::info!("CORNER TOUCH: BOTTOM-RIGHT ({:.1}, {:.1})", x, y);
+            if current_screen == ScreenState::Selector {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_shutdown_visible(true);
+                    *state.interaction.shutdown_timer.borrow_mut() = Some(Instant::now());
+                }
+            }
         }
     }
 
@@ -196,7 +204,7 @@ fn handle_touch_move(
 fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f32, raw_y: f32) {
     *state.interaction.last_interaction.borrow_mut() = Instant::now();
 
-    let (drag, duration, fired, start_x, start_y, start_off_x, x, y, _is_alphabet) = {
+    let (drag, duration, fired, start_x, start_y, start_off_x, x, y, _is_alphabet, shutdown_was_visible) = {
         let mut ts = state.interaction.touch.borrow_mut();
         if !ts.active {
             return;
@@ -215,6 +223,7 @@ fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f3
             x,
             y,
             ts.is_alphabet,
+            ts.shutdown_was_visible,
         )
     };
     {
@@ -230,7 +239,7 @@ fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f3
 
         if screen == ScreenState::Selector {
             let start_off_x = start_off_x;
-            screens::selector::handle_touch_up(state, &u, x, y, dx, dy, drag, fired, start_off_x);
+            screens::selector::handle_touch_up(state, &u, x, y, dx, dy, drag, fired, start_off_x, shutdown_was_visible);
         } else if screen == ScreenState::Player {
             screens::player::handle_touch_up(state, &u, x, y, dx, dy, drag, fired);
         } else if screen == ScreenState::TrackPicker {

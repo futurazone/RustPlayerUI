@@ -24,6 +24,7 @@ pub fn handle_touch_up(
     drag: bool,
     fired: bool,
     start_off_x: f32,
+    shutdown_was_visible: bool,
 ) {
     let (s_offset_x, s_spacing) = {
         let Ok(s) = state.interaction.swiper.try_borrow() else {
@@ -32,6 +33,20 @@ pub fn handle_touch_up(
         (s.offset_x, s.spacing)
     };
     let offset_diff = (s_offset_x - start_off_x).abs();
+
+    // --- HIT TEST BOTÓN SHUTDOWN (Si estaba visible al inicio del toque) ---
+    if shutdown_was_visible && !drag && !fired && offset_diff < TAP_OFFSET_THRESHOLD {
+        let btn_x = SCREEN_WIDTH - 125.0;
+        let btn_y = SCREEN_HEIGHT - 125.0;
+        let btn_size = 100.0;
+        
+        if x >= btn_x && x <= (btn_x + btn_size) && y >= btn_y && y <= (btn_y + btn_size) {
+            log::warn!("Touch: SHUTDOWN button hit test success!");
+            ui.invoke_shutdown();
+            ui.set_shutdown_visible(false); // Ocultar tras pulsar
+            return;
+        }
+    }
 
     if !drag && !fired && offset_diff < TAP_OFFSET_THRESHOLD {
         // TAP!

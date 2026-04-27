@@ -46,6 +46,7 @@ fn load_icons(ui: &AppWindow) {
     ui.set_icon_shuffle(Image::load_from_path("assets/shuffle.svg".as_ref()).unwrap_or_default());
     ui.set_icon_repeat(Image::load_from_path("assets/repeat.svg".as_ref()).unwrap_or_default());
     ui.set_icon_library(Image::load_from_path("assets/library.svg".as_ref()).unwrap_or_default());
+    ui.set_icon_power(Image::load_from_path("assets/power.svg".as_ref()).unwrap_or_default());
     
     // Cargar splash desde la ruta del backend
     ui.set_splash_image(Image::load_from_path("../backend/splash_design.png".as_ref()).unwrap_or_default());
@@ -128,6 +129,19 @@ fn main() -> Result<(), slint::PlatformError> {
             // 1. Comprobación de Long-Press (TouchState)
             if !touch_handlers::check_long_press(&state, &ui_weak, now) {
                 return;
+            }
+
+            // 1b. Timer de apagado (auto-ocultar a los 5s)
+            if let Ok(mut timer_opt) = state.interaction.shutdown_timer.try_borrow_mut() {
+                if let Some(start_t) = *timer_opt {
+                    if now.duration_since(start_t).as_secs() >= 5 {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_shutdown_visible(false);
+                            *timer_opt = None;
+                            log::info!("Shutdown button auto-hidden");
+                        }
+                    }
+                }
             }
 
             // 2. Procesamiento de Status del Player (Polling cada 1s)

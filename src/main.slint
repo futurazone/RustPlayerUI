@@ -101,6 +101,7 @@ export component AppWindow inherits Window {
     in property <image> icon_shuffle;
     in property <image> icon_repeat;
     in property <image> icon_library;
+    in property <image> icon_power;
     
     in property <string> album_title: "---";
     in property <string> album_artist: "---";
@@ -120,6 +121,9 @@ export component AppWindow inherits Window {
     in-out property <length> warp_offset: 0;
     in-out property <float> warp_opacity: 1.0;
 
+    in-out property <bool> shutdown_visible: false;
+    in-out property <bool> is_shutting_down: false;
+
     callback swiper_dragged(length);
     callback swiper_released(length);
     callback album_clicked(int);
@@ -129,6 +133,7 @@ export component AppWindow inherits Window {
     callback toggle_browser_mode();
     callback track_clicked(string);
     callback close_track_picker();
+    callback shutdown();
 
     // Player Callbacks
     callback toggle_pause();
@@ -150,7 +155,7 @@ export component AppWindow inherits Window {
             height: 100%;
             source: root.bg_cover;
             image-fit: cover;
-            opacity: 0.22;
+            opacity: 0.45;
         }
         Rectangle {
             background: @linear-gradient(180deg, #00000000 0%, #000 100%);
@@ -248,9 +253,37 @@ export component AppWindow inherits Window {
                     font-size: 32px;
                     font-weight: 800;
                     color: #4da6ff;
-                    horizontal-alignment: center;
                     vertical-alignment: center;
                 }
+            }
+        }
+
+        // --- BOTÓN SHUTDOWN (SOLO ICONO NEÓN) ---
+        if (root.shutdown_visible) : Rectangle {
+            x: parent.width - 125px;
+            y: parent.height - 125px;
+            width: 100px;
+            height: 100px * root.vertical_scaling;
+            background: transparent;
+            border-width: 0;
+            clip: true;
+
+            // Brillo neón aplicado al rectángulo contenedor
+            drop-shadow-color: #ff0000;
+            drop-shadow-blur: 30px;
+            drop-shadow-offset-x: 0;
+            drop-shadow-offset-y: 0;
+
+            Image {
+                width: 100%;
+                height: 100%;
+                source: root.icon_power;
+                colorize: #ff3333;
+                image-fit: contain;
+            }
+            
+            TouchArea {
+                clicked => { root.shutdown(); }
             }
         }
     }
@@ -571,6 +604,25 @@ export component AppWindow inherits Window {
             height: 100%;
             source: root.splash_image;
             image-fit: cover;
+        }
+    }
+
+    // --- EFECTO DE APAGADO (FADE TO BLACK) ---
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: black;
+        opacity: is_shutting_down ? 1 : 0;
+        visible: self.opacity > 0;
+        animate opacity { duration: 1000ms; easing: ease-in-out; }
+        
+        Text {
+            text: "Apagando...";
+            font-size: 50px;
+            font-weight: 800;
+            color: #222;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 }

@@ -23,6 +23,7 @@ pub struct InteractionState {
     pub last_interaction: Rc<RefCell<Instant>>,
     pub albums_pos: Rc<RefCell<(f32, i32)>>,
     pub playlists_pos: Rc<RefCell<(f32, i32)>>,
+    pub shutdown_timer: Rc<RefCell<Option<Instant>>>,
 }
 
 /// Estado relacionado con la biblioteca de música y visualización.
@@ -97,6 +98,7 @@ impl AppState {
                 last_interaction: Rc::new(RefCell::new(Instant::now())),
                 albums_pos: Rc::new(RefCell::new((0.0f32, -CENTER_INDEX))),
                 playlists_pos: Rc::new(RefCell::new((0.0f32, -CENTER_INDEX))),
+                shutdown_timer: Rc::new(RefCell::new(None)),
             },
             library: LibraryState {
                 albums,

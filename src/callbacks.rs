@@ -42,6 +42,22 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
         });
     }
 
+    // shutdown
+    {
+        let ui_weak = ui.as_weak();
+        let api_url = state.api_url.clone();
+        ui.on_shutdown(move || {
+            log::warn!("SHUTDOWN triggered!");
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_is_shutting_down(true);
+            }
+            let api = api_url.clone();
+            std::thread::spawn(move || {
+                let _ = api::send_player_command_post(&api, "shutdown");
+            });
+        });
+    }
+
     // track_clicked
     {
         let ui_weak = ui.as_weak();

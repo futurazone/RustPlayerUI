@@ -19,6 +19,7 @@ pub struct TouchState {
     pub start_offset_x: f32,
     pub is_alphabet: bool,
     pub start_offset_y: f32,
+    pub shutdown_was_visible: bool,
 }
 
 impl Default for TouchState {
@@ -36,6 +37,7 @@ impl Default for TouchState {
             start_offset_x: 0.0,
             is_alphabet: false,
             start_offset_y: 0.0,
+            shutdown_was_visible: false,
         }
     }
 }

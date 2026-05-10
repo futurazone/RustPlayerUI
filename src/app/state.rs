@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -6,7 +7,7 @@ use std::time::{Duration, Instant};
 use slint::VecModel;
 
 use crate::api;
-use crate::config::{CENTER_INDEX, SWIPER_SPACING, VISIBLE_SLOTS};
+use crate::config::{CENTER_INDEX, CENTER_X, SWIPER_SPACING, VISIBLE_SLOTS};
 use crate::physics;
 use crate::touch::TouchState;
 use crate::ui_utils::{get_item_slint, ImageState};
@@ -24,6 +25,7 @@ pub struct InteractionState {
     pub albums_pos: Rc<RefCell<(f32, i32)>>,
     pub playlists_pos: Rc<RefCell<(f32, i32)>>,
     pub shutdown_timer: Rc<RefCell<Option<Instant>>>,
+    pub x_positions: Rc<VecModel<f32>>,
 }
 
 /// Estado relacionado con la biblioteca de música y visualización.
@@ -38,6 +40,7 @@ pub struct LibraryState {
     pub img_tx: mpsc::Sender<(String, u32, u32, Vec<u8>)>,
     pub last_bg_target_idx: Rc<RefCell<i32>>,
     pub last_bg_update_time: Rc<RefCell<Instant>>,
+    pub track_cover_by_id: Rc<RefCell<HashMap<String, String>>>,
 }
 
 /// Estado relacionado con la reproducción actual.
@@ -88,6 +91,10 @@ impl AppState {
                 swiper.lib_offset + i as i32,
             ));
         }
+        let x_positions = Rc::new(VecModel::default());
+        for i in -CENTER_INDEX..=CENTER_INDEX {
+            x_positions.push(CENTER_X + (i as f32) * swiper.spacing);
+        }
 
         let state = Self {
             interaction: InteractionState {
@@ -99,6 +106,7 @@ impl AppState {
                 albums_pos: Rc::new(RefCell::new((0.0f32, -CENTER_INDEX))),
                 playlists_pos: Rc::new(RefCell::new((0.0f32, -CENTER_INDEX))),
                 shutdown_timer: Rc::new(RefCell::new(None)),
+                x_positions,
             },
             library: LibraryState {
                 albums,
@@ -110,6 +118,7 @@ impl AppState {
                 img_tx,
                 last_bg_target_idx: Rc::new(RefCell::new(-1)),
                 last_bg_update_time: Rc::new(RefCell::new(Instant::now())),
+                track_cover_by_id: Rc::new(RefCell::new(HashMap::new())),
             },
             playback: PlaybackState {
                 playback_state: Rc::new(RefCell::new(String::from("stop"))),

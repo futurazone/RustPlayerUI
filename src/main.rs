@@ -1,7 +1,7 @@
 //! Punto de entrada de PiPlayer Rust UI.
 //!
 //! Orquesta la inicialización y conecta los módulos:
-//! - `app_state` → estado compartido (AppState con Rc<RefCell<>>)
+//! - `app::state` → estado compartido (AppState con Rc<RefCell<>>)
 //! - `touch_handlers` → eventos touch globales (down/move/up + long press)
 //! - `callbacks` → callbacks de UI de Slint (botones, navegación)
 //! - `player_sync` → sincronización con el servidor MPD (status, progress, watchdog)
@@ -26,14 +26,13 @@ mod warp;
 
 slint::include_modules!();
 
-use slint::{ComponentHandle, Image, Model, VecModel};
+use slint::{ComponentHandle, Image, Model};
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crate::app::Application;
-use crate::app::state::AppState;
 use crate::config::*;
 use crate::ui_utils::*;
 use crate::warp::WarpState;
@@ -47,9 +46,25 @@ fn load_icons(ui: &AppWindow) {
     ui.set_icon_repeat(Image::load_from_path("assets/repeat.svg".as_ref()).unwrap_or_default());
     ui.set_icon_library(Image::load_from_path("assets/library.svg".as_ref()).unwrap_or_default());
     ui.set_icon_power(Image::load_from_path("assets/power.svg".as_ref()).unwrap_or_default());
-    
-    // Cargar splash desde la ruta del backend
-    ui.set_splash_image(Image::load_from_path("../backend/splash_design.png".as_ref()).unwrap_or_default());
+
+    let splash_paths = [
+        std::env::var("SPLASH_IMAGE").ok(),
+        Some("assets/splash_design.png".to_string()),
+        Some("../backend/splash_design.png".to_string()),
+    ];
+
+    for splash_path in splash_paths.into_iter().flatten() {
+        if Path::new(&splash_path).exists() {
+            if let Some(image) = Image::load_from_path(splash_path.as_ref()).ok() {
+                ui.set_splash_image(image);
+                log::info!("Splash loaded from {}", splash_path);
+                return;
+            }
+        }
+    }
+
+    log::warn!("Splash image not found; using default empty image");
+    ui.set_splash_image(Image::default());
 }
 
 
@@ -81,6 +96,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let timer = slint::Timer::default();
     let mut splash_done = false;
     let mut backend_ready_time: Option<Instant> = None;
+    let mut slow_frame_count: u32 = 0;
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -93,6 +109,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 };
                 let mut dt = now.duration_since(*last).as_secs_f32();
                 *last = now;
+                if dt > 0.022 {
+                    slow_frame_count += 1;
+                    if slow_frame_count % 30 == 0 {
+                        log::warn!("Perf: slow frame dt={:.3}s count={}", dt, slow_frame_count);
+                    }
+                }
                 // CAP de dt para evitar saltos locos en la física si hay lag
                 if dt > 0.05 { dt = 0.05; }
                 dt
@@ -188,8 +210,21 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Ok((new_albums, new_playlists)) = lib_rx.try_recv() {
                 log::info!("API: Real data received, updating UI models...");
                 
+                // Mapa rápido para resolver portada de la canción actual sin escanear toda la librería por frame.
+                let mut track_cover_by_id = std::collections::HashMap::new();
+                for album in &new_albums {
+                    if let Some(cover_path) = album.cover_thumb.as_ref().or(album.cover.as_ref()) {
+                        if let Some(tracks) = &album.tracks {
+                            for track in tracks {
+                                track_cover_by_id.insert(track.track_id.clone(), cover_path.clone());
+                            }
+                        }
+                    }
+                }
+
                 *state.library.albums.borrow_mut() = new_albums;
                 *state.library.playlists.borrow_mut() = new_playlists;
+                *state.library.track_cover_by_id.borrow_mut() = track_cover_by_id;
                 
                 // Trigger windowed pre-loading
                 if let (Ok(mut img_s), Ok(mode)) = (
@@ -247,21 +282,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 );
                 let img = slint::Image::from_rgba8(buffer);
                 
-                // Check if this is the player cover before moving img
+                // Resolver portada actual en O(1) con índice track_id -> cover_path.
                 let current_track = state.playback.last_track_id.borrow();
                 if let Some(track_id) = current_track.as_ref() {
-                    let albums = state.library.albums.borrow();
-                    for album in albums.iter() {
-                        if let Some(tracks) = &album.tracks {
-                            for track in tracks {
-                                if &track.track_id == track_id {
-                                    if let Some(cp) = album.cover_thumb.as_ref().or(album.cover.as_ref()) {
-                                        if cp == &path {
-                                            player_cover_update = Some(img.clone());
-                                        }
-                                    }
-                                }
-                            }
+                    if let Some(expected_cover_path) = state.library.track_cover_by_id.borrow().get(track_id) {
+                        if expected_cover_path == &path {
+                            player_cover_update = Some(img.clone());
                         }
                     }
                 }
@@ -379,10 +405,11 @@ fn main() -> Result<(), slint::PlatformError> {
             if physics_updated || is_moving || recycled {
                 if let Some(ui) = ui_weak.upgrade() {
                     let off = offset_x;
-                    let x_pos: Vec<f32> = (-CENTER_INDEX..=CENTER_INDEX)
-                        .map(|i| CENTER_X + (i as f32) * spacing + off)
-                        .collect();
-                    ui.set_x_positions(Rc::new(VecModel::from(x_pos)).into());
+                    for i in 0..VISIBLE_SLOTS {
+                        let visual_i = i - CENTER_INDEX;
+                        let x = CENTER_X + (visual_i as f32) * spacing + off;
+                        state.interaction.x_positions.set_row_data(i as usize, x);
+                    }
 
                     let shift = (-off / spacing).round() as i32;
                     let visual_center = (CENTER_INDEX + shift).clamp(0, VISIBLE_SLOTS - 1);

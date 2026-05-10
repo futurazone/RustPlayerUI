@@ -1,10 +1,9 @@
 pub mod state;
 
-use slint::{ComponentHandle, Model, VecModel, Image};
-use std::rc::Rc;
+use slint::ComponentHandle;
 use crate::AppWindow;
 use self::state::AppState;
-use crate::config::*;
+use crate::config::CENTER_INDEX;
 
 pub struct Application {
     pub ui: AppWindow,
@@ -20,10 +19,7 @@ impl Application {
 
         // Setup UI initial state
         ui.set_visible_items(state.library.model.clone().into());
-        let x_pos: Vec<f32> = (-CENTER_INDEX..=CENTER_INDEX)
-            .map(|i| CENTER_X + (i as f32) * state.interaction.swiper.borrow().spacing)
-            .collect();
-        ui.set_x_positions(Rc::new(VecModel::from(x_pos)).into());
+        ui.set_x_positions(state.interaction.x_positions.clone().into());
         ui.set_center_index(CENTER_INDEX);
 
         Ok((Self { ui, state }, img_rx))

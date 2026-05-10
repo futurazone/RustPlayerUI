@@ -69,22 +69,29 @@ impl SwiperPhysics {
 
     pub fn set_snap_slot(&mut self, dx: f32, velocity: f32) {
         let displacement_slots = dx / self.spacing;
-        let flick_threshold = 900.0; // Sincronizado con Python (very_fast_flick)
-        let commit_threshold = 0.18; // Sincronizado con commit_threshold en Python
+        // Ajustes más conservadores para touch real en Pi:
+        // - Pedimos más velocidad para considerar "flick"
+        // - Reducimos la predicción inercial para evitar saltos de más
+        let flick_threshold = 1300.0;
+        let commit_threshold = 0.24;
+        let fast_flick_threshold = 2200.0;
 
         let slot = if velocity.abs() > flick_threshold {
-            // Predicción de inercia (flick) - Duplicado a 0.68 para mayor recorrido
-            let predicted_offset = dx + velocity * 0.68;
+            let predicted_offset = dx + velocity * 0.45;
             let mut s = (predicted_offset / self.spacing).round() as i32;
 
-            // Asegurar que al menos se mueva un slot en la dirección del flick si hay intención
+            // Asegurar que al menos se mueva un slot si hubo intención de gesto.
             if s == 0 && dx.abs() > (self.spacing * 0.1) {
                 s = if velocity > 0.0 { 1 } else { -1 };
             }
-            s.clamp(-15, 15)
+            // Evitar saltos largos por ruido de velocidad en release.
+            let max_slots = if velocity.abs() > fast_flick_threshold { 2 } else { 1 };
+            s.clamp(-max_slots, max_slots)
         } else {
-            // Snap simple basado en desplazamiento real
-            if displacement_slots > commit_threshold {
+            // Snap por desplazamiento: estable para 1 slot, pero permite 2 en arrastre claro.
+            if displacement_slots.abs() > 0.85 {
+                displacement_slots.round().clamp(-2.0, 2.0) as i32
+            } else if displacement_slots > commit_threshold {
                 1
             } else if displacement_slots < -commit_threshold {
                 -1
@@ -94,10 +101,11 @@ impl SwiperPhysics {
         };
 
         log::info!(
-            "Physics: Snapping to slot {} (v={:.1}, dx={:.1})",
+            "Physics: snap slot={} (v={:.1}, dx={:.1}, disp_slots={:.2})",
             slot,
             velocity,
-            dx
+            dx,
+            displacement_slots
         );
         self.snap_target = slot as f32 * self.spacing;
         self.is_moving = true;

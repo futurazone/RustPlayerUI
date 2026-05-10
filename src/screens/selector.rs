@@ -102,7 +102,10 @@ pub fn handle_touch_up(
             } else {
                 log::info!("Interaccion: TAP Portada Lateral ({}) -> Snapping", slot);
                 if let Ok(mut mut_s) = state.interaction.swiper.try_borrow_mut() {
-                    let target_snap = slot as f32 * s_spacing;
+                    // Tap lateral: avanzar un único slot en la dirección del toque
+                    // para que centrar la siguiente portada sea consistente.
+                    let step = if slot > 0 { 1.0 } else { -1.0 };
+                    let target_snap = step * s_spacing;
                     mut_s.snap_target = mut_s.offset_x + target_snap;
                     mut_s.is_moving = true;
                     mut_s.velocity = 0.0;
@@ -113,6 +116,13 @@ pub fn handle_touch_up(
         if let Ok(mut s) = state.interaction.swiper.try_borrow_mut() {
             let vel = s.velocity;
             let off = s.offset_x;
+            log::info!(
+                "Selector release: dx={:.1} dy={:.1} off={:.1} vel={:.1}",
+                dx,
+                dy,
+                off,
+                vel
+            );
             s.set_snap_slot(off, vel);
         }
     }

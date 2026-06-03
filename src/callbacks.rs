@@ -1,7 +1,7 @@
 //! Registro de callbacks de UI (todo excepto touch globales).
 //!
 //! Conecta las acciones de Slint con la lógica de negocio:
-//! - Navegación: back_to_selector, close_track_picker, album_clicked, track_clicked
+//! - Navegación: back_to_selector, close_track_picker, track_clicked
 //! - Browser: toggle_browser_mode (cambia entre Albums y Playlists, resetea swiper)
 //! - Player: toggle_pause, play_next, play_prev, toggle_shuffle, toggle_repeat
 //!   (los toggles usan estado optimista con lock de 2s antes de sincronizar con servidor)
@@ -13,7 +13,7 @@ use slint::{ComponentHandle, Model};
 use crate::api;
 use crate::app::state::AppState;
 use crate::config::{CENTER_INDEX, VISIBLE_SLOTS};
-use crate::ui_utils::{get_item_slint, go_to_selector};
+use crate::ui_utils::{enqueue_preload_range, get_item_slint, go_to_selector};
 use crate::{AppWindow, BrowserMode, ScreenState};
 
 /// Registra todos los callbacks de UI (excepto touch globales).
@@ -135,7 +135,7 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                             &albums,
                             &playlists,
                             &mut img_s,
-                            &state.library.img_tx,
+                            &state.library.loader,
                             lib_off + i,
                         ),
                     );
@@ -145,71 +145,18 @@ pub fn register_callbacks(ui: &AppWindow, state: &AppState) {
                     ui.set_bg_cover(item_data.cover.clone());
                 }
 
-                // PRECARGA: Disparamos la carga del vecindario inmediatamente al cambiar de modo
-                crate::ui_utils::preload_neighborhood(
+                // PRECARGA: Reiniciamos ventana al cambiar de modo
+                let window_center = lib_off + CENTER_INDEX;
+                *state.library.preload_window_center.borrow_mut() = window_center;
+                enqueue_preload_range(
+                    window_center,
+                    crate::config::PRELOAD_WINDOW_HALF,
                     &new_mode,
                     &albums,
                     &playlists,
                     &mut img_s,
-                    &state.library.img_tx,
-                    lib_off,
+                    &state.library.loader,
                 );
-            }
-        });
-    }
-
-    // album_clicked
-    {
-        let ui_weak = ui.as_weak();
-        let state = state.clone();
-        ui.on_album_clicked(move |visual_idx| {
-            if let Some(ui) = ui_weak.upgrade() {
-                if let Some(item_data) = state.library.model.row_data(visual_idx as usize) {
-                    log::info!("Navigation: Go to Player (Click visual_idx={})", visual_idx);
-                    ui.set_album_title(item_data.title.clone());
-                    ui.set_album_artist(item_data.artist.clone());
-                    ui.set_bg_cover(item_data.cover.clone());
-                    ui.set_current_screen(ScreenState::Player);
-
-                    // Trigger playback
-                    let albums = state.library.albums.borrow().clone();
-                    let playlists = state.library.playlists.borrow().clone();
-                    let s = state.interaction.swiper.borrow();
-                    let mode = *state.library.current_mode.borrow();
-                    let target_idx = s.lib_offset + visual_idx as i32;
-                    let api = state.api_url.clone();
-
-                    let is_paused = *state.playback.playback_state.borrow() == "pause";
-                    ui.set_is_playing(true);
-                    *state.playback.playback_state.borrow_mut() = "play".to_string();
-                    if mode == api::BrowserMode::Albums {
-                        if target_idx >= 0 && (target_idx as usize) < albums.len() {
-                            if let Some(tracks) = &albums[target_idx as usize].tracks {
-                                let track_ids: Vec<String> = tracks.iter().map(|t| t.track_id.clone()).collect();
-                                std::thread::spawn(move || {
-                                    let _ = api::send_queue(&api, track_ids);
-                                    if is_paused {
-                                        let _ = api::send_player_command_get(&api, "pause");
-                                    }
-                                });
-                            }
-                        }
-                    } else {
-                        // Modo Playlists: Fetch y Play (Estilo Python)
-                        if target_idx >= 0 && (target_idx as usize) < playlists.len() {
-                            if let Some(id) = playlists[target_idx as usize].id.clone() {
-                                std::thread::spawn(move || {
-                                    if let Ok(track_ids) = api::fetch_playlist_tracks(&api, &id) {
-                                        let _ = api::send_queue(&api, track_ids);
-                                        if is_paused {
-                                            let _ = api::send_player_command_get(&api, "pause");
-                                        }
-                                    }
-                                });
-                            }
-                        }
-                    }
-                }
             }
         });
     }

@@ -2,12 +2,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use slint::VecModel;
 
 use crate::api;
 use crate::config::{CENTER_INDEX, CENTER_X, SWIPER_SPACING, VISIBLE_SLOTS};
+use crate::loader::ImageLoader;
 use crate::physics;
 use crate::touch::TouchState;
 use crate::ui_utils::{get_item_slint, ImageState};
@@ -37,7 +39,8 @@ pub struct LibraryState {
     pub image_state: Rc<RefCell<ImageState>>,
     pub track_ids: Rc<RefCell<Vec<String>>>,
     pub model: Rc<VecModel<AlbumData>>,
-    pub img_tx: mpsc::Sender<(String, u32, u32, Vec<u8>)>,
+    pub loader: Arc<ImageLoader>,
+    pub preload_window_center: Rc<RefCell<i32>>,
     pub last_bg_target_idx: Rc<RefCell<i32>>,
     pub last_bg_update_time: Rc<RefCell<Instant>>,
     pub track_cover_by_id: Rc<RefCell<HashMap<String, String>>>,
@@ -71,6 +74,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(api_url: String) -> (Self, mpsc::Receiver<(String, u32, u32, Vec<u8>)>) {
         let (img_tx, img_rx) = mpsc::channel();
+        let loader = Arc::new(ImageLoader::new(img_tx, 2));
 
         let mut swiper = physics::SwiperPhysics::new();
         swiper.spacing = SWIPER_SPACING;
@@ -87,7 +91,7 @@ impl AppState {
                 &albums.borrow(),
                 &playlists.borrow(),
                 &mut image_state.borrow_mut(),
-                &img_tx,
+                &loader,
                 swiper.lib_offset + i as i32,
             ));
         }
@@ -115,7 +119,8 @@ impl AppState {
                 image_state,
                 track_ids: Rc::new(RefCell::new(Vec::new())),
                 model,
-                img_tx,
+                loader,
+                preload_window_center: Rc::new(RefCell::new(CENTER_INDEX)),
                 last_bg_target_idx: Rc::new(RefCell::new(-1)),
                 last_bg_update_time: Rc::new(RefCell::new(Instant::now())),
                 track_cover_by_id: Rc::new(RefCell::new(HashMap::new())),

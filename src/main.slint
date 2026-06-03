@@ -124,9 +124,6 @@ export component AppWindow inherits Window {
     in-out property <bool> shutdown_visible: false;
     in-out property <bool> is_shutting_down: false;
 
-    callback swiper_dragged(length);
-    callback swiper_released(length);
-    callback album_clicked(int);
     callback album_pressed(int, length, length);
     callback album_released(int, length, length);
     callback back_to_selector();
@@ -211,30 +208,6 @@ export component AppWindow inherits Window {
             }
         }
 
-        // ZONA TÁCTIL GLOBAL DEL SELECTOR
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            pointer-event(event) => {
-                if (event.kind == PointerEventKind.down) {
-                    root.global_touch_down(self.mouse-x, self.mouse-y);
-                }
-                if (event.kind == PointerEventKind.move && self.pressed) {
-                    root.swiper_dragged(self.mouse-x - self.pressed-x);
-                    root.global_touch_move(self.mouse-x, self.mouse-y);
-                }
-                if (event.kind == PointerEventKind.up) {
-                    root.swiper_released(self.mouse-x - self.pressed-x);
-                    root.global_touch_up(self.mouse-x, self.mouse-y);
-                }
-            }
-            clicked => {
-                if (abs(self.mouse-x - self.pressed-x) / 1px < 15) {
-                    root.album_clicked(root.center_index);
-                }
-            }
-        }
-
         // --- BARRA DE ALFABETO (CAPA SUPERIOR) ---
         Rectangle {
             y: 0;
@@ -259,6 +232,7 @@ export component AppWindow inherits Window {
         }
 
         // --- BOTÓN SHUTDOWN (SOLO ICONO NEÓN) ---
+        // El touch se maneja puramente en Rust via global_touch_down/up
         if (root.shutdown_visible) : Rectangle {
             x: parent.width - 125px;
             y: parent.height - 125px;
@@ -280,10 +254,6 @@ export component AppWindow inherits Window {
                 source: root.icon_power;
                 colorize: #ff3333;
                 image-fit: contain;
-            }
-            
-            TouchArea {
-                clicked => { root.shutdown(); }
             }
         }
     }

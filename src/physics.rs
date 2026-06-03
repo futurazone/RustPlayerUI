@@ -69,32 +69,28 @@ impl SwiperPhysics {
 
     pub fn set_snap_slot(&mut self, dx: f32, velocity: f32) {
         let displacement_slots = dx / self.spacing;
-        // Ajustes más conservadores para touch real en Pi:
-        // - Pedimos más velocidad para considerar "flick"
-        // - Reducimos la predicción inercial para evitar saltos de más
-        let flick_threshold = 1300.0;
-        let commit_threshold = 0.24;
-        let fast_flick_threshold = 2200.0;
+        // Tuning simplificado: sin histéresis confusa.
+        // Arrastre lento (< 900px/s):
+        //   < 35% del slot → no snap (permite corrección fina)
+        //   >= 35% → round al slot más cercano (0-49% = 0, 50-149% = 1, 150%+ = 2)
+        // Flick rápido (>= 900px/s):
+        //   Predicción inercial * 0.34, max 4 slots
+        let flick_threshold = 900.0;
+        let snap_threshold = 0.35;
+        let fast_flick_threshold = 2700.0;
 
         let slot = if velocity.abs() > flick_threshold {
-            let predicted_offset = dx + velocity * 0.45;
+            let predicted_offset = dx + velocity * 0.34;
             let mut s = (predicted_offset / self.spacing).round() as i32;
 
-            // Asegurar que al menos se mueva un slot si hubo intención de gesto.
             if s == 0 && dx.abs() > (self.spacing * 0.1) {
                 s = if velocity > 0.0 { 1 } else { -1 };
             }
-            // Evitar saltos largos por ruido de velocidad en release.
-            let max_slots = if velocity.abs() > fast_flick_threshold { 2 } else { 1 };
+            let max_slots = if velocity.abs() > fast_flick_threshold { 4 } else { 2 };
             s.clamp(-max_slots, max_slots)
         } else {
-            // Snap por desplazamiento: estable para 1 slot, pero permite 2 en arrastre claro.
-            if displacement_slots.abs() > 0.85 {
+            if displacement_slots.abs() > snap_threshold {
                 displacement_slots.round().clamp(-2.0, 2.0) as i32
-            } else if displacement_slots > commit_threshold {
-                1
-            } else if displacement_slots < -commit_threshold {
-                -1
             } else {
                 0
             }

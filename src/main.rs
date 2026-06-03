@@ -15,6 +15,7 @@ mod app;
 mod api;
 mod callbacks;
 mod config;
+mod loader;
 mod physics;
 mod player_sync;
 mod screens;
@@ -153,10 +154,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
 
-            // 1b. Timer de apagado (auto-ocultar a los 5s)
+            // 1b. Timer de apagado (auto-ocultar tras SHUTDOWN_AUTO_HIDE_SECS)
             if let Ok(mut timer_opt) = state.interaction.shutdown_timer.try_borrow_mut() {
                 if let Some(start_t) = *timer_opt {
-                    if now.duration_since(start_t).as_secs() >= 5 {
+                    if now.duration_since(start_t).as_secs() >= SHUTDOWN_AUTO_HIDE_SECS as u64 {
                         if let Some(ui) = ui_weak.upgrade() {
                             ui.set_shutdown_visible(false);
                             *timer_opt = None;
@@ -225,20 +226,22 @@ fn main() -> Result<(), slint::PlatformError> {
                 *state.library.albums.borrow_mut() = new_albums;
                 *state.library.playlists.borrow_mut() = new_playlists;
                 *state.library.track_cover_by_id.borrow_mut() = track_cover_by_id;
-                
-                // Trigger windowed pre-loading
+
+                // Preload initial window on first library load
                 if let (Ok(mut img_s), Ok(mode)) = (
                     state.library.image_state.try_borrow_mut(),
                     state.library.current_mode.try_borrow(),
                 ) {
-                    let s = state.interaction.swiper.borrow();
-                    ui_utils::preload_neighborhood(
+                    let center = state.interaction.swiper.borrow().lib_offset + CENTER_INDEX;
+                    *state.library.preload_window_center.borrow_mut() = center;
+                    ui_utils::enqueue_preload_range(
+                        center,
+                        PRELOAD_WINDOW_HALF,
                         &mode,
                         &state.library.albums.borrow(),
                         &state.library.playlists.borrow(),
                         &mut img_s,
-                        &state.library.img_tx,
-                        s.lib_offset,
+                        &state.library.loader,
                     );
                 }
 
@@ -258,7 +261,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                     &albums,
                                     &playlists,
                                     &mut img_s,
-                                    &state.library.img_tx,
+                                    &state.library.loader,
                                     s.lib_offset + i,
                                 ),
                             );
@@ -270,7 +273,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            // 6. Procesamiento de imágenes asíncronas (limitado a 2 por frame para fluidez, como en Python)
+            // 6. Procesamiento de imágenes asíncronas (limitado a 4 por frame para evitar micro-stutter)
             let mut loaded_any = false;
             let mut uploaded_count = 0;
             let mut player_cover_update: Option<Image> = None;
@@ -293,12 +296,37 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
 
                 if let Ok(mut img_s) = state.library.image_state.try_borrow_mut() {
-                    img_s.cache.insert(path.clone(), img);
+                    img_s.cache.insert(path.clone(), img.clone());
                     img_s.loading.remove(&path);
+
+                    // Actualizar SOLO el slot visible que corresponde a esta imagen,
+                    // en lugar de hacer full reload de todos los slots.
+                    if let (Ok(mode), Ok(albums), Ok(playlists)) = (
+                        state.library.current_mode.try_borrow(),
+                        state.library.albums.try_borrow(),
+                        state.library.playlists.try_borrow(),
+                    ) {
+                        let lib_off = state.interaction.swiper.borrow().lib_offset;
+                        if let Some(slot) = ui_utils::find_slot_for_cover_path(
+                            &mode, &albums, &playlists, &path, lib_off,
+                        ) {
+                            let new_data = get_item_slint(
+                                &mode, &albums, &playlists, &mut img_s,
+                                &state.library.loader, lib_off + slot,
+                            );
+                            if slot == CENTER_INDEX && new_data.cover.size().width > 0 {
+                                let bg = new_data.cover.clone();
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_bg_cover(bg);
+                                }
+                            }
+                            state.library.model.set_row_data(slot as usize, new_data);
+                        }
+                    }
                 }
                 loaded_any = true;
                 uploaded_count += 1;
-                if uploaded_count >= 2 {
+                if uploaded_count >= 4 {
                     break;
                 }
             }
@@ -306,7 +334,8 @@ fn main() -> Result<(), slint::PlatformError> {
             // Apply player cover update after all borrows are done
             if let Some(player_cover) = player_cover_update {
                 if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_player_cover(player_cover);
+                    ui.set_player_cover(player_cover.clone());
+                    ui.set_bg_cover(player_cover);
                 }
             }
             
@@ -315,7 +344,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let (Ok(mut img_s), Ok(mode)) = (state.library.image_state.try_borrow_mut(), state.library.current_mode.try_borrow()) {
                     ui_utils::cleanup_cache(
                         &mut img_s, 
-                        state.interaction.swiper.borrow().lib_offset,
+                        *state.library.preload_window_center.borrow(),
                         &mode,
                         &state.library.albums.borrow(),
                         &state.library.playlists.borrow()
@@ -365,7 +394,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     return;
                 };
 
-                if !s.is_moving && !ts.active && !loaded_any && !recycled_from_warp {
+                if !s.is_moving && !ts.active && !recycled_from_warp {
                     return;
                 }
 
@@ -385,7 +414,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 
                 let lib_delta = s.lib_offset - old_lib_offset;
-                let recycled = lib_delta != 0 || loaded_any || recycled_from_warp;
+                let recycled = lib_delta != 0 || recycled_from_warp;
 
                 (
                     s.is_moving || was_moving,
@@ -427,10 +456,9 @@ fn main() -> Result<(), slint::PlatformError> {
                             let albums = state.library.albums.borrow();
                             let playlists = state.library.playlists.borrow();
 
-                            // OPTIMIZACIÓN: Solo recargamos todo si hubo un warp, un cambio de modo 
-                            // o si alguna imagen terminó de cargar (para que se vea en su slot).
-                            // Si solo es un desplazamiento suave de 1 slot, movemos los datos existentes.
-                            if !loaded_any && !recycled_from_warp && lib_delta == 1 {
+                            // OPTIMIZACIÓN: Recarga completa solo en warp o cambio de modo.
+                            // Desplazamiento suave de 1 slot mueve datos existentes.
+                            if !recycled_from_warp && lib_delta == 1 {
                                 // Desplazamiento a la derecha (lib_offset aumenta): 
                                 // Corremos todos los items una posición a la izquierda y cargamos el nuevo a la derecha.
                                 for i in 0..(VISIBLE_SLOTS - 1) {
@@ -438,8 +466,8 @@ fn main() -> Result<(), slint::PlatformError> {
                                         state.library.model.set_row_data(i as usize, d);
                                     }
                                 }
-                                state.library.model.set_row_data((VISIBLE_SLOTS - 1) as usize, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.library.img_tx, lib_offset + VISIBLE_SLOTS - 1));
-                            } else if !loaded_any && !recycled_from_warp && lib_delta == -1 {
+                                state.library.model.set_row_data((VISIBLE_SLOTS - 1) as usize, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.library.loader, lib_offset + VISIBLE_SLOTS - 1));
+                            } else if !recycled_from_warp && lib_delta == -1 {
                                 // Desplazamiento a la izquierda (lib_offset disminuye):
                                 // Corremos todos los items una posición a la derecha y cargamos el nuevo a la izquierda.
                                 for i in (1..VISIBLE_SLOTS).rev() {
@@ -447,9 +475,9 @@ fn main() -> Result<(), slint::PlatformError> {
                                         state.library.model.set_row_data(i as usize, d);
                                     }
                                 }
-                                state.library.model.set_row_data(0, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.library.img_tx, lib_offset));
+                                state.library.model.set_row_data(0, get_item_slint(&mode, &albums, &playlists, &mut img_s, &state.library.loader, lib_offset));
                             } else {
-                                // Caso general: recarga completa (Warp, cambio de modo brusco o imagen cargada)
+                                // Caso general: recarga completa (Warp, cambio de modo brusco o multi-slot)
                                 for i in 0..VISIBLE_SLOTS {
                                     state.library.model.set_row_data(
                                         i as usize,
@@ -458,25 +486,13 @@ fn main() -> Result<(), slint::PlatformError> {
                                             &albums,
                                             &playlists,
                                             &mut img_s,
-                                            &state.library.img_tx,
+                                            &state.library.loader,
                                             lib_offset + i,
                                         ),
                                     );
                                 }
                             }
 
-                            // Pre-load neighbors: solo si el offset cambió o si hubo recarga completa.
-                            // Esto asegura que la ventana de pre-carga siempre esté al día.
-                            if lib_delta != 0 || recycled_from_warp {
-                                ui_utils::preload_neighborhood(
-                                    &mode,
-                                    &albums,
-                                    &playlists,
-                                    &mut img_s,
-                                    &state.library.img_tx,
-                                    lib_offset,
-                                );
-                            }
                         }
                     }
 
@@ -490,7 +506,31 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            // 11. (El fondo diferido ahora se ejecuta antes del early return del Paso 9)
+            // 11. Preload window shift check (después de la física)
+            {
+                let current_center = state.interaction.swiper.borrow().lib_offset + CENTER_INDEX;
+                let window_center = *state.library.preload_window_center.borrow();
+                if (current_center - window_center).abs() > WINDOW_SHIFT_THRESHOLD {
+                    let new_center = current_center;
+                    *state.library.preload_window_center.borrow_mut() = new_center;
+                    if let (Ok(mut img_s), Ok(mode)) = (
+                        state.library.image_state.try_borrow_mut(),
+                        state.library.current_mode.try_borrow(),
+                    ) {
+                        ui_utils::enqueue_preload_range(
+                            new_center,
+                            PRELOAD_WINDOW_HALF,
+                            &mode,
+                            &state.library.albums.borrow(),
+                            &state.library.playlists.borrow(),
+                            &mut img_s,
+                            &state.library.loader,
+                        );
+                    }
+                }
+            }
+
+            // 12. (El fondo diferido ahora se ejecuta antes del early return del Paso 9)
         },
     );
 

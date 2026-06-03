@@ -49,12 +49,11 @@ pub fn register_touch_handlers(ui: &AppWindow, state: &AppState) {
 
 /// Resuelve la letra del alfabeto correspondiente a una coordenada X.
 fn resolve_alphabet_char(x: f32) -> char {
-    let margin = 40.0;
-    let width = 1200.0; // 1280 - 40 - 40
-    let calib_f = ((x - margin) / width).clamp(0.0, 1.0);
+    let calib_f = ((x - (SCREEN_WIDTH as f32 * 0.08))
+        / (SCREEN_WIDTH as f32 * (0.85 - 0.08)))
+        .clamp(0.0, 1.0);
     let alphabet = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let char_idx = (calib_f * alphabet.len() as f32).floor() as usize;
-    let char_idx = char_idx.min(alphabet.len() - 1);
+    let char_idx = (calib_f * (alphabet.len() as f32 - 1.0)).round() as usize;
     alphabet.chars().nth(char_idx).unwrap_or('#')
 }
 
@@ -79,7 +78,7 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
     ts.start_offset_y = state.interaction.track_physics.borrow().offset_y;
 
     if s.is_moving && s.velocity.abs() > 100.0 {
-        s.velocity *= 0.3; // "Catch" effect from Python
+        s.velocity *= 0.5; // "Catch" suave para no matar el momentum de golpe
     } else {
         s.velocity = 0.0;
     }
@@ -94,11 +93,9 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
     if y < 90.0 && current_screen == ScreenState::Selector {
         ts.is_alphabet = true;
         let target_char = resolve_alphabet_char(x);
-        let margin = 40.0;
-        let width = 1200.0;
-        let calib_f = ((x - margin) / width).clamp(0.0, 1.0);
+        let calib_f = ((x - (SCREEN_WIDTH * 0.08)) / (SCREEN_WIDTH * (0.85 - 0.08))).clamp(0.0, 1.0);
         log::info!(
-            "ALPHABET TOUCH (DOWN): '{}' (x={:.1}, f={:.2})",
+            "ALPHABET TOUCH (DOWN): '{}' (x={:.1}, f={:.3})",
             target_char,
             x,
             calib_f
@@ -114,16 +111,13 @@ fn handle_touch_down(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: 
         } else if x > (SCREEN_WIDTH - CORNER_TOUCH_SIZE) {
             log::info!("CORNER TOUCH: TOP-RIGHT ({:.1}, {:.1})", x, y);
         }
-    } else if y > (SCREEN_HEIGHT - CORNER_TOUCH_SIZE) {
-        if x < CORNER_TOUCH_SIZE {
-            log::info!("CORNER TOUCH: BOTTOM-LEFT ({:.1}, {:.1})", x, y);
-        } else if x > (SCREEN_WIDTH - CORNER_TOUCH_SIZE) {
-            log::info!("CORNER TOUCH: BOTTOM-RIGHT ({:.1}, {:.1})", x, y);
-            if current_screen == ScreenState::Selector {
-                if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_shutdown_visible(true);
-                    *state.interaction.shutdown_timer.borrow_mut() = Some(Instant::now());
-                }
+    } else if current_screen == ScreenState::Selector {
+        // Shutdown: zona amplia para mostrar el botón (250px derecha, 200px abajo)
+        if x >= SHUTDOWN_HIT_X && y >= SHUTDOWN_HIT_Y {
+            log::info!("SHUTDOWN: Touch in wide zone ({:.1}, {:.1})", x, y);
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_shutdown_visible(true);
+                *state.interaction.shutdown_timer.borrow_mut() = Some(Instant::now());
             }
         }
     }
@@ -177,7 +171,11 @@ fn handle_touch_move(
 
                 if dt > 0.001 {
                     let inst_v = dx / dt;
+                    let old_v = s.velocity;
                     s.velocity = inst_v * 0.85 + s.velocity * 0.15; // Smoothing Python style
+                    if (old_v * s.velocity) < 0.0 && s.velocity.abs() > 100.0 {
+                        log::info!("SWIPER DIR CHANGE: old_v={:.1}, inst_v={:.1}, new_v={:.1}, dx={:.1}, dt={:.6}", old_v, inst_v, s.velocity, dx, dt);
+                    }
                     ts.last_time = now;
                 }
             } else if screen == ScreenState::TrackPicker {
@@ -204,7 +202,7 @@ fn handle_touch_move(
 fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f32, raw_y: f32) {
     *state.interaction.last_interaction.borrow_mut() = Instant::now();
 
-    let (drag, duration, fired, start_x, start_y, start_off_x, x, y, _is_alphabet, shutdown_was_visible) = {
+    let (drag, _duration, fired, start_x, start_y, start_off_x, x, y, _is_alphabet, shutdown_was_visible) = {
         let mut ts = state.interaction.touch.borrow_mut();
         if !ts.active {
             return;
@@ -238,7 +236,6 @@ fn handle_touch_up(state: &AppState, ui_weak: &slint::Weak<AppWindow>, raw_x: f3
         let screen = u.get_current_screen();
 
         if screen == ScreenState::Selector {
-            let start_off_x = start_off_x;
             screens::selector::handle_touch_up(state, &u, x, y, dx, dy, drag, fired, start_off_x, shutdown_was_visible);
         } else if screen == ScreenState::Player {
             screens::player::handle_touch_up(state, &u, x, y, dx, dy, drag, fired);
@@ -264,12 +261,23 @@ pub fn check_long_press(
             && now.duration_since(start).as_millis() > LONG_PRESS_MS
             && !ts.long_press_fired
         {
+            // Validar que el toque esté sobre el álbum central
+            let s = state.interaction.swiper.borrow();
+            let start_y = ts.start_y;
+            let slot = ((ts.start_x - (CENTER_X + ts.start_offset_x)) / s.spacing).round() as i32;
+            let on_center_album = slot == 0
+                && start_y >= ALBUM_TAP_Y_MIN
+                && start_y <= ALBUM_TAP_Y_MAX;
+
+            if !on_center_album {
+                return true;
+            }
+
             ts.long_press_fired = true;
             if let Some(ui) = ui_weak.upgrade() {
                 // Al hacer pulsación larga, abrimos el selector de canciones del disco centrado
-                let s = state.interaction.swiper.borrow();
                 let albums = state.library.albums.borrow();
-                let target_idx = s.lib_offset + 3; // El centro
+                let target_idx = s.lib_offset + CENTER_INDEX;
 
                 if target_idx >= 0 && (target_idx as usize) < albums.len() {
                     let album = &albums[target_idx as usize];

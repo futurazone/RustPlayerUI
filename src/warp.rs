@@ -8,7 +8,7 @@
 use std::time::Instant;
 
 use crate::api;
-use crate::config::SCREEN_WIDTH;
+use crate::config::{CENTER_INDEX, SCREEN_WIDTH};
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum WarpState {
@@ -68,7 +68,7 @@ pub fn trigger_warp_jump(
         return false;
     }
 
-    let curr_idx = (current_lib_offset + 3).rem_euclid(albums.len() as i32);
+    let curr_idx = (current_lib_offset + CENTER_INDEX).rem_euclid(albums.len() as i32);
     let n = albums.len() as i32;
     let r_steps = (target_idx - curr_idx).rem_euclid(n);
     let l_steps = (curr_idx - target_idx).rem_euclid(n);

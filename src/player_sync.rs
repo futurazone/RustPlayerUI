@@ -9,11 +9,9 @@
 
 use std::time::Instant;
 
-use slint::Image;
 use crate::api;
 use crate::app::state::AppState;
 use crate::ScreenState;
-use crate::ui_utils::{ImageState, spawn_image_loader};
 
 /// Procesa una actualización de estado del reproductor desde el hilo de polling.
 /// También carga la portada de la canción actual si es nueva.
@@ -70,14 +68,15 @@ pub fn process_status_update(status: &api::PlayerStatus, state: &AppState, ui: &
         ui.set_time_label("0:00".into());
         *last_id = new_track_id;
 
-        // Cargar portada de la nueva canción
+        // Cargar portada de la nueva canción y sincronizar fondo
         if let Some(path) = status.cover_thumb.as_ref().or(status.cover.as_ref()) {
             if let Ok(mut img_s) = state.library.image_state.try_borrow_mut() {
                 if let Some(cached) = img_s.cache.get(path) {
                     ui.set_player_cover(cached.clone());
+                    ui.set_bg_cover(cached.clone());
                 } else if !img_s.loading.contains(path) {
                     img_s.loading.insert(path.clone());
-                    spawn_image_loader(path.clone(), state.library.img_tx.clone());
+                    state.library.loader.enqueue(path.clone());
                 }
             }
         }
@@ -121,9 +120,18 @@ pub fn check_inactivity_watchdog(state: &AppState, ui: &crate::AppWindow) {
     let current_screen = ui.get_current_screen();
 
     if ps == "play" && current_screen != ScreenState::Player {
-        // 1. Si está en el swiper (o track picker) reproduciendo, a los 30s vuelve al player
         if inactive_duration.as_secs() > 30 {
             log::info!("Watchdog: 30s de inactividad mientras suena la música, volviendo al Player");
+            // Restaurar fondo con la portada de la canción actual desde caché
+            if let Some(track_id) = state.playback.last_track_id.borrow().as_ref() {
+                if let Some(cover_path) = state.library.track_cover_by_id.borrow().get(track_id) {
+                    if let Ok(img_s) = state.library.image_state.try_borrow() {
+                        if let Some(cover) = img_s.cache.get(cover_path) {
+                            ui.set_bg_cover(cover.clone());
+                        }
+                    }
+                }
+            }
             ui.set_current_screen(ScreenState::Player);
         }
     } else if current_screen == ScreenState::Player {
